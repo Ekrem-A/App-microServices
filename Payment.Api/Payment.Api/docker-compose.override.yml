@@ -1,0 +1,17 @@
+# Development overrides
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+version: '3.8'
+
+services:
+  payment-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      - ./appsettings.Development.json:/app/appsettings.Development.json:ro
+    ports:
+      - "5100:8080"
+

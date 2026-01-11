@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  catalog-api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      # Azure SQL Database - Connection string from Azure Key Vault or App Settings
+      - ConnectionStrings__DefaultConnection=${AZURE_SQL_CONNECTION_STRING}
+      # Redis Configuration
+      - Redis__Configuration=${REDIS_CONNECTION}
+      - Redis__InstanceName=CatalogCache_
+      - Redis__Enabled=true
+      # Kafka Configuration
+      - Kafka__BootstrapServers=${KAFKA_BOOTSTRAP_SERVERS}
+      # API Security
+      - ApiKeySettings__Enabled=true
+      - ApiKeySettings__ValidKeys__0__Key=${ORDER_SERVICE_API_KEY}
+      - ApiKeySettings__ValidKeys__0__ServiceName=OrderService
+      - ApiKeySettings__ValidKeys__1__Key=${BASKET_SERVICE_API_KEY}
+      - ApiKeySettings__ValidKeys__1__ServiceName=BasketService
+      # Rate Limiting
+      - RateLimitSettings__Enabled=true
+      - RateLimitSettings__MaxRequestsPerWindow=100
+      - RateLimitSettings__WindowSeconds=60
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  redis:
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  kafka:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+

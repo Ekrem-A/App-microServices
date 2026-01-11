@@ -1,0 +1,10 @@
+# Nixpacks configuration for Railway deployment
+[phases.setup]
+nixPkgs = ["curl"]
+
+[phases.build]
+cmds = ["dotnet publish Cart.Api/Cart.Api.csproj -c Release -o out"]
+
+[start]
+cmd = "dotnet out/Cart.Api.dll"
+

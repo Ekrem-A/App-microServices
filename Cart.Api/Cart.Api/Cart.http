@@ -1,0 +1,173 @@
+@Cart_HostAddress = http://localhost:5175
+@userId = user-123
+@anonUserId = anon-456
+@productId = 550e8400-e29b-41d4-a716-446655440001
+@productId2 = 550e8400-e29b-41d4-a716-446655440002
+
+### Health Check - Ready
+GET {{Cart_HostAddress}}/health/ready
+Accept: application/json
+
+### Health Check - Live
+GET {{Cart_HostAddress}}/health/live
+Accept: application/json
+
+### ==========================================
+### CART OPERATIONS
+### ==========================================
+
+### Get Cart (initially empty or 404)
+GET {{Cart_HostAddress}}/api/cart/{{userId}}
+Accept: application/json
+
+### Add First Item to Cart
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/items
+Content-Type: application/json
+
+{
+    "productId": "{{productId}}",
+    "productName": "iPhone 15 Pro",
+    "unitPrice": 49999.99,
+    "quantity": 1,
+    "imageUrl": "https://example.com/iphone15pro.jpg"
+}
+
+### Add Second Item to Cart
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/items
+Content-Type: application/json
+
+{
+    "productId": "{{productId2}}",
+    "productName": "AirPods Pro 2",
+    "unitPrice": 8999.99,
+    "quantity": 2,
+    "imageUrl": "https://example.com/airpods-pro.jpg"
+}
+
+### Add Same Product Again (should increase quantity)
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/items
+Content-Type: application/json
+
+{
+    "productId": "{{productId}}",
+    "productName": "iPhone 15 Pro",
+    "unitPrice": 49999.99,
+    "quantity": 1
+}
+
+### Get Cart (should have items now)
+GET {{Cart_HostAddress}}/api/cart/{{userId}}
+Accept: application/json
+
+### Update Item Quantity
+PUT {{Cart_HostAddress}}/api/cart/{{userId}}/items/{{productId}}
+Content-Type: application/json
+
+{
+    "newQuantity": 3
+}
+
+### Remove Item from Cart
+DELETE {{Cart_HostAddress}}/api/cart/{{userId}}/items/{{productId2}}
+Accept: application/json
+
+### ==========================================
+### COUPON OPERATIONS
+### ==========================================
+
+### Apply Percentage Coupon
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/coupon
+Content-Type: application/json
+
+{
+    "couponCode": "WELCOME10",
+    "couponType": "Percentage",
+    "value": 10,
+    "minimumOrderAmount": 1000
+}
+
+### Apply Fixed Amount Coupon
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/coupon
+Content-Type: application/json
+
+{
+    "couponCode": "FLAT500",
+    "couponType": "FixedAmount",
+    "value": 500,
+    "minimumOrderAmount": 5000
+}
+
+### Remove Coupon
+DELETE {{Cart_HostAddress}}/api/cart/{{userId}}/coupon
+Accept: application/json
+
+### ==========================================
+### CART MERGE (Anonymous -> User)
+### ==========================================
+
+### Add item to anonymous cart first
+POST {{Cart_HostAddress}}/api/cart/{{anonUserId}}/items
+Content-Type: application/json
+
+{
+    "productId": "550e8400-e29b-41d4-a716-446655440003",
+    "productName": "MacBook Pro 14",
+    "unitPrice": 89999.99,
+    "quantity": 1
+}
+
+### Merge anonymous cart into user cart
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/merge
+Content-Type: application/json
+
+{
+    "sourceUserId": "{{anonUserId}}"
+}
+
+### ==========================================
+### REPRICE CART (Catalog Price Sync)
+### ==========================================
+
+### Reprice items in cart
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/reprice
+Content-Type: application/json
+
+{
+    "priceUpdates": [
+        {
+            "productId": "{{productId}}",
+            "newUnitPrice": 44999.99
+        },
+        {
+            "productId": "550e8400-e29b-41d4-a716-446655440003",
+            "newUnitPrice": 84999.99
+        }
+    ]
+}
+
+### ==========================================
+### CHECKOUT (Publishes to Kafka)
+### ==========================================
+
+### Checkout Cart
+POST {{Cart_HostAddress}}/api/cart/{{userId}}/checkout
+Content-Type: application/json
+
+{
+    "shippingAddress": "123 Main St, Istanbul, Turkey",
+    "paymentMethod": "CreditCard"
+}
+
+### Get Cart After Checkout (should be 404 - cart cleared)
+GET {{Cart_HostAddress}}/api/cart/{{userId}}
+Accept: application/json
+
+### ==========================================
+### CLEAR CART
+### ==========================================
+
+### Clear Cart (if you want to delete without checkout)
+DELETE {{Cart_HostAddress}}/api/cart/{{userId}}
+Accept: application/json
+
+###
