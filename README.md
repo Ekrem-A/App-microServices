@@ -386,13 +386,6 @@ Projeler Railway üzerinde deploy edilmeye hazırdır:
 3. Ortam değişkenlerini ayarlayın
 4. PostgreSQL ve Redis add-on'larını ekleyin
 
----
-
-## 📝 Lisans
-
-Bu proje MIT lisansı altında lisanslanmıştır.
-
----
 
 ## 👤 Geliştirici
 
