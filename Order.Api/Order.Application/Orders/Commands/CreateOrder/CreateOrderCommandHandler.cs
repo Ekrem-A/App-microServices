@@ -15,7 +15,8 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Res
 
     public CreateOrderCommandHandler(
         IOrderDbContext context,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        IOrderNotificationService? notificationService = null)
     {
         _context = context;
         _currentUser = currentUser;
