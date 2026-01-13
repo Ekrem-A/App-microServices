@@ -12,6 +12,7 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Res
 {
     private readonly IOrderDbContext _context;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrderNotificationService? _notificationService;
 
     public CreateOrderCommandHandler(
         IOrderDbContext context,
@@ -20,6 +21,7 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Res
     {
         _context = context;
         _currentUser = currentUser;
+        _notificationService = notificationService;
     }
 
     public async Task<Result<OrderDto>> Handle(CreateOrderCommand request, CancellationToken cancellationToken)
@@ -92,7 +94,15 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, Res
         _context.Orders.Add(order);
         await _context.SaveChangesAsync(cancellationToken);
 
-        return Result.Success(OrderMapper.ToDto(order));
+        var orderDto = OrderMapper.ToDto(order);
+
+        // Send real-time notification
+        if (_notificationService != null)
+        {
+            await _notificationService.NotifyOrderCreatedAsync(orderDto, cancellationToken);
+        }
+
+        return Result.Success(orderDto);
     }
 }
 

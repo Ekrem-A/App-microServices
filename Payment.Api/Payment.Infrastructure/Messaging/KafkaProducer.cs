@@ -7,10 +7,18 @@ using Payment.Infrastructure.Configuration;
 
 namespace Payment.Infrastructure.Messaging;
 
-public class KafkaProducer : IEventPublisher, IDisposable
+public sealed class KafkaProducer : IEventPublisher, IDisposable
 {
     private readonly IProducer<string, string> _producer;
     private readonly ILogger<KafkaProducer> _logger;
+    private bool _disposed;
+
+    // Cached options for serialization
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false
+    };
 
     public KafkaProducer(IOptions<KafkaSettings> settings, ILogger<KafkaProducer> logger)
     {
@@ -22,7 +30,8 @@ public class KafkaProducer : IEventPublisher, IDisposable
             Acks = Acks.All,
             EnableIdempotence = true,
             MessageSendMaxRetries = 3,
-            RetryBackoffMs = 1000
+            RetryBackoffMs = 1000,
+            LingerMs = 5 // Batch messages for better throughput
         };
 
         // Add SASL configuration if provided
@@ -39,9 +48,11 @@ public class KafkaProducer : IEventPublisher, IDisposable
 
     public async Task PublishAsync<T>(string topic, T message, string? key = null, CancellationToken cancellationToken = default) where T : class
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        
         try
         {
-            var json = JsonSerializer.Serialize(message);
+            var json = JsonSerializer.Serialize(message, s_jsonOptions);
             var kafkaMessage = new Message<string, string>
             {
                 Key = key ?? Guid.NewGuid().ToString(),
@@ -62,7 +73,12 @@ public class KafkaProducer : IEventPublisher, IDisposable
 
     public void Dispose()
     {
-        _producer?.Dispose();
+        if (_disposed)
+            return;
+            
+        _producer.Flush(TimeSpan.FromSeconds(5));
+        _producer.Dispose();
+        _disposed = true;
     }
 }
 

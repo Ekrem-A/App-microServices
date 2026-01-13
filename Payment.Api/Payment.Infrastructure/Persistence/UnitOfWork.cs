@@ -4,10 +4,11 @@ using Payment.Infrastructure.Persistence.Repositories;
 
 namespace Payment.Infrastructure.Persistence;
 
-public class UnitOfWork : IUnitOfWork, IDisposable
+public sealed class UnitOfWork : IUnitOfWork, IDisposable, IAsyncDisposable
 {
     private readonly PaymentDbContext _context;
     private IDbContextTransaction? _transaction;
+    private bool _disposed;
     
     private IPaymentRepository? _payments;
     private IPaymentAttemptRepository? _paymentAttempts;
@@ -31,9 +32,9 @@ public class UnitOfWork : IUnitOfWork, IDisposable
     public IRefundRepository Refunds => 
         _refunds ??= new RefundRepository(_context);
 
-    public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        return await _context.SaveChangesAsync(cancellationToken);
+        return _context.SaveChangesAsync(cancellationToken);
     }
 
     public async Task BeginTransactionAsync(CancellationToken cancellationToken = default)
@@ -61,10 +62,29 @@ public class UnitOfWork : IUnitOfWork, IDisposable
         }
     }
 
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+
+        if (_transaction != null)
+        {
+            await _transaction.DisposeAsync();
+            _transaction = null;
+        }
+        
+        await _context.DisposeAsync();
+        _disposed = true;
+    }
+
     public void Dispose()
     {
+        if (_disposed)
+            return;
+
         _transaction?.Dispose();
         _context.Dispose();
+        _disposed = true;
     }
 }
 

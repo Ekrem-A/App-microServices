@@ -1,8 +1,6 @@
 # Development overrides
 # Usage: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
 
-version: '3.8'
-
 services:
   payment-api:
     build:
@@ -13,5 +11,5 @@ services:
     volumes:
       - ./appsettings.Development.json:/app/appsettings.Development.json:ro
     ports:
-      - "5100:8080"
+      - "5004:8080"
 

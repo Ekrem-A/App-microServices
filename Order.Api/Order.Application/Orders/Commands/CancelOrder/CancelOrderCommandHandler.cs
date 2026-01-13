@@ -9,13 +9,16 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Res
 {
     private readonly IOrderDbContext _context;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrderNotificationService? _notificationService;
 
     public CancelOrderCommandHandler(
         IOrderDbContext context,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        IOrderNotificationService? notificationService = null)
     {
         _context = context;
         _currentUser = currentUser;
+        _notificationService = notificationService;
     }
 
     public async Task<Result> Handle(CancelOrderCommand request, CancellationToken cancellationToken)
@@ -37,6 +40,17 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Res
         {
             order.Cancel(request.Reason);
             await _context.SaveChangesAsync(cancellationToken);
+
+            // Send real-time notification
+            if (_notificationService != null)
+            {
+                await _notificationService.NotifyOrderCancelledAsync(
+                    order.Id, 
+                    order.UserId, 
+                    request.Reason, 
+                    cancellationToken);
+            }
+
             return Result.Success();
         }
         catch (InvalidOperationException ex)

@@ -15,6 +15,12 @@ public class PaytrService : IPaytrService
     private readonly PaytrSettings _settings;
     private readonly ILogger<PaytrService> _logger;
 
+    // Cached options and encoder to avoid repeated allocations
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     public PaytrService(
         HttpClient httpClient,
         IOptions<PaytrSettings> settings,
@@ -44,24 +50,24 @@ public class PaytrService : IPaytrService
             // Generate merchant_oid (unique order id for PayTR)
             var merchantOid = request.MerchantOid;
 
-            // Calculate PayTR token hash
-            var hashStr = string.Concat(
-                _settings.MerchantId,
-                request.UserIp,
-                merchantOid,
-                request.UserEmail,
-                paymentAmountKurus.ToString(),
-                basketBase64,
-                request.NoInstallment ? "1" : "0",
-                request.MaxInstallment.ToString(),
-                request.Currency,
-                _settings.TestMode ? "1" : "0"
-            );
+            // Calculate PayTR token hash using StringBuilder for better performance
+            var hashBuilder = new StringBuilder(256);
+            hashBuilder.Append(_settings.MerchantId);
+            hashBuilder.Append(request.UserIp);
+            hashBuilder.Append(merchantOid);
+            hashBuilder.Append(request.UserEmail);
+            hashBuilder.Append(paymentAmountKurus);
+            hashBuilder.Append(basketBase64);
+            hashBuilder.Append(request.NoInstallment ? '1' : '0');
+            hashBuilder.Append(request.MaxInstallment);
+            hashBuilder.Append(request.Currency);
+            hashBuilder.Append(_settings.TestMode ? '1' : '0');
+            hashBuilder.Append(_settings.MerchantSalt);
 
-            var paytrToken = GenerateHash(hashStr + _settings.MerchantSalt);
+            var paytrToken = GenerateHash(hashBuilder.ToString());
 
             // Build form data
-            var formData = new Dictionary<string, string>
+            var formData = new Dictionary<string, string>(16)
             {
                 { "merchant_id", _settings.MerchantId },
                 { "user_ip", request.UserIp },
@@ -86,16 +92,13 @@ public class PaytrService : IPaytrService
 
             _logger.LogDebug("Sending PayTR init request for MerchantOid {MerchantOid}", merchantOid);
 
-            var content = new FormUrlEncodedContent(formData);
+            using var content = new FormUrlEncodedContent(formData);
             var response = await _httpClient.PostAsync("/odeme/api/get-token", content, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             _logger.LogDebug("PayTR response: {Response}", responseBody);
 
-            var result = JsonSerializer.Deserialize<PaytrApiResponse>(responseBody, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var result = JsonSerializer.Deserialize<PaytrApiResponse>(responseBody, s_jsonOptions);
 
             if (result?.Status == "success" && !string.IsNullOrEmpty(result.Token))
             {
@@ -133,16 +136,16 @@ public class PaytrService : IPaytrService
             // PayTR expects amount in kuruş (cents)
             var refundAmountKurus = (int)(amount * 100);
             
-            // Generate refund hash: merchant_id + merchant_oid + refund_amount + merchant_salt
-            var hashStr = string.Concat(
-                _settings.MerchantId,
-                merchantOid,
-                refundAmountKurus.ToString(),
-                _settings.MerchantSalt
-            );
-            var paytrToken = GenerateHash(hashStr);
+            // Generate refund hash using StringBuilder
+            var hashBuilder = new StringBuilder(128);
+            hashBuilder.Append(_settings.MerchantId);
+            hashBuilder.Append(merchantOid);
+            hashBuilder.Append(refundAmountKurus);
+            hashBuilder.Append(_settings.MerchantSalt);
+            
+            var paytrToken = GenerateHash(hashBuilder.ToString());
 
-            var formData = new Dictionary<string, string>
+            var formData = new Dictionary<string, string>(5)
             {
                 { "merchant_id", _settings.MerchantId },
                 { "merchant_oid", merchantOid },
@@ -158,16 +161,13 @@ public class PaytrService : IPaytrService
             _logger.LogDebug("Sending PayTR refund request for MerchantOid {MerchantOid}, Amount {Amount}", 
                 merchantOid, amount);
 
-            var content = new FormUrlEncodedContent(formData);
+            using var content = new FormUrlEncodedContent(formData);
             var response = await _httpClient.PostAsync("/odeme/iade", content, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
             _logger.LogDebug("PayTR refund response: {Response}", responseBody);
 
-            var result = JsonSerializer.Deserialize<PaytrRefundApiResponse>(responseBody, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            var result = JsonSerializer.Deserialize<PaytrRefundApiResponse>(responseBody, s_jsonOptions);
 
             if (result?.Status == "success")
             {
@@ -206,20 +206,25 @@ public class PaytrService : IPaytrService
     public string GenerateCallbackHash(PaytrCallbackRequest callback)
     {
         // PayTR callback hash: merchant_oid + merchant_salt + status + total_amount
-        var hashStr = string.Concat(
-            callback.MerchantOid,
-            _settings.MerchantSalt,
-            callback.Status,
-            callback.TotalAmount.ToString("F0")
-        );
-        return GenerateHash(hashStr);
+        var hashBuilder = new StringBuilder(128);
+        hashBuilder.Append(callback.MerchantOid);
+        hashBuilder.Append(_settings.MerchantSalt);
+        hashBuilder.Append(callback.Status);
+        hashBuilder.Append(callback.TotalAmount.ToString("F0"));
+        
+        return GenerateHash(hashBuilder.ToString());
     }
 
     private string GenerateHash(string input)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_settings.MerchantKey));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(input));
-        return Convert.ToBase64String(hash);
+        var keyBytes = Encoding.UTF8.GetBytes(_settings.MerchantKey);
+        var inputBytes = Encoding.UTF8.GetBytes(input);
+        
+        // Use stackalloc for small buffers to avoid heap allocation
+        Span<byte> hashBuffer = stackalloc byte[32]; // SHA256 produces 32 bytes
+        
+        HMACSHA256.HashData(keyBytes, inputBytes, hashBuffer);
+        return Convert.ToBase64String(hashBuffer);
     }
 
     private static string FormatAmount(decimal amount)
@@ -227,14 +232,14 @@ public class PaytrService : IPaytrService
         return ((int)(amount * 100)).ToString();
     }
 
-    private class PaytrApiResponse
+    private sealed class PaytrApiResponse
     {
         public string? Status { get; set; }
         public string? Token { get; set; }
         public string? Reason { get; set; }
     }
 
-    private class PaytrRefundApiResponse
+    private sealed class PaytrRefundApiResponse
     {
         public string? Status { get; set; }
         public string? RefundId { get; set; }

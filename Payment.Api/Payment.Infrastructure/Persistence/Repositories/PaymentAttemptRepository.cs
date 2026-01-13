@@ -22,6 +22,7 @@ public class PaymentAttemptRepository : IPaymentAttemptRepository
     public async Task<PaymentAttemptEntity?> GetByProviderReferenceAsync(string providerReference, CancellationToken cancellationToken = default)
     {
         return await _context.PaymentAttempts
+            .AsNoTracking()
             .FirstOrDefaultAsync(a => a.ProviderReference == providerReference, cancellationToken);
     }
 

@@ -24,6 +24,7 @@ public class RefundRepository : IRefundRepository
     public async Task<IEnumerable<RefundEntity>> GetByPaymentIdAsync(Guid paymentId, CancellationToken cancellationToken = default)
     {
         return await _context.Refunds
+            .AsNoTracking()
             .Where(r => r.PaymentId == paymentId)
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync(cancellationToken);
@@ -32,6 +33,7 @@ public class RefundRepository : IRefundRepository
     public async Task<decimal> GetTotalRefundedAmountAsync(Guid paymentId, CancellationToken cancellationToken = default)
     {
         return await _context.Refunds
+            .AsNoTracking()
             .Where(r => r.PaymentId == paymentId && r.Status == RefundStatus.Completed)
             .SumAsync(r => r.Amount, cancellationToken);
     }
@@ -41,10 +43,10 @@ public class RefundRepository : IRefundRepository
         await _context.Refunds.AddAsync(refund, cancellationToken);
     }
 
-    public async Task UpdateAsync(RefundEntity refund, CancellationToken cancellationToken = default)
+    public Task UpdateAsync(RefundEntity refund, CancellationToken cancellationToken = default)
     {
         _context.Refunds.Update(refund);
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 }
 

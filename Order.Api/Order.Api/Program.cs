@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Order.Api.Extensions;
+using Order.Api.Hubs;
 using Order.Api.Middleware;
 using Order.Api.Services;
 using Order.Application;
@@ -43,6 +44,10 @@ builder.Services.AddDataProtection()
 // Add Application and Infrastructure layers
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// SignalR for real-time notifications
+builder.Services.AddSignalR();
+builder.Services.AddScoped<IOrderNotificationService, OrderNotificationService>();
 
 // JWT Authentication
 var authConfig = builder.Configuration.GetSection("Authentication");
@@ -93,6 +98,19 @@ builder.Services.AddAuthentication(options =>
             var userId = context.Principal?.FindFirst("sub")?.Value
                 ?? context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
             Log.Information("Token validated for user: {UserId}", userId);
+            return Task.CompletedTask;
+        },
+        // SignalR WebSocket authentication support
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs/orders"))
+            {
+                context.Token = accessToken;
+            }
+
             return Task.CompletedTask;
         }
     };
@@ -275,6 +293,9 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// SignalR Hub endpoint
+app.MapHub<OrderHub>("/hubs/orders");
 
 // Health checks
 app.MapCustomHealthChecks();

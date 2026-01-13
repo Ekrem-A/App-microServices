@@ -1,6 +1,24 @@
-version: '3.8'
-
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: catalog-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123
+      POSTGRES_DB: catalogdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - catalog-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d catalogdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Redis Cache
   redis:
     image: redis:7-alpine
@@ -67,6 +85,8 @@ services:
       dockerfile: Catalog.Api/Dockerfile
     container_name: catalog-api
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
       kafka:
@@ -74,8 +94,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
-      # Azure SQL Database connection (from appsettings.json)
-      - ConnectionStrings__DefaultConnection=Server=tcp:ekomyserver.database.windows.net,1433;Initial Catalog=CatalogService_db;Persist Security Info=False;User ID=Ekrem;Password=Ekoo.3003;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=catalogdb;Username=postgres;Password=123
       - Redis__Configuration=redis:6379
       - Redis__InstanceName=CatalogCache_
       - Redis__Enabled=true
@@ -84,18 +103,14 @@ services:
       - ApiKeySettings__Enabled=false
       - RateLimitSettings__Enabled=false
     ports:
-      - "5000:8080"
+      - "5001:8080"
     networks:
       - catalog-network
     restart: on-failure
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 40s
 
 volumes:
+  postgres_data:
+    driver: local
   redis_data:
     driver: local
   zookeeper_data:

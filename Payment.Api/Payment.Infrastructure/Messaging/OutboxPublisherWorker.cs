@@ -17,6 +17,12 @@ public class OutboxPublisherWorker : BackgroundService
     private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(5);
     private const int BatchSize = 100;
 
+    // Cached JsonSerializerOptions
+    private static readonly JsonSerializerOptions s_jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     public OutboxPublisherWorker(
         IServiceProvider serviceProvider,
         IOptions<KafkaSettings> settings,
@@ -50,7 +56,7 @@ public class OutboxPublisherWorker : BackgroundService
 
     private async Task ProcessOutboxMessagesAsync(CancellationToken cancellationToken)
     {
-        using var scope = _serviceProvider.CreateScope();
+        await using var scope = _serviceProvider.CreateAsyncScope();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var eventPublisher = scope.ServiceProvider.GetRequiredService<IEventPublisher>();
 
@@ -66,33 +72,21 @@ public class OutboxPublisherWorker : BackgroundService
         {
             try
             {
-                var topic = GetTopicForMessageType(message.Type);
+                var (topic, success) = await PublishMessageByTypeAsync(eventPublisher, message.Type, message.Payload, message.CorrelationId, cancellationToken);
                 
-                // Deserialize and publish based on message type
-                object? eventObject = message.Type switch
-                {
-                    nameof(PaymentSucceededEvent) => JsonSerializer.Deserialize<PaymentSucceededEvent>(message.Payload),
-                    nameof(PaymentFailedEvent) => JsonSerializer.Deserialize<PaymentFailedEvent>(message.Payload),
-                    nameof(RefundCompletedEvent) => JsonSerializer.Deserialize<RefundCompletedEvent>(message.Payload),
-                    nameof(RefundFailedEvent) => JsonSerializer.Deserialize<RefundFailedEvent>(message.Payload),
-                    _ => null
-                };
-
-                if (eventObject == null)
+                if (!success)
                 {
                     _logger.LogWarning("Unknown message type: {Type}", message.Type);
                     message.MarkAsFailed($"Unknown message type: {message.Type}");
-                    await unitOfWork.OutboxMessages.UpdateAsync(message, cancellationToken);
-                    continue;
                 }
-
-                await PublishEventAsync(eventPublisher, topic, eventObject, message.CorrelationId, cancellationToken);
+                else
+                {
+                    message.MarkAsProcessed();
+                    _logger.LogDebug("Published outbox message {MessageId} of type {Type} to topic {Topic}",
+                        message.MessageId, message.Type, topic);
+                }
                 
-                message.MarkAsProcessed();
                 await unitOfWork.OutboxMessages.UpdateAsync(message, cancellationToken);
-                
-                _logger.LogDebug("Published outbox message {MessageId} of type {Type} to topic {Topic}",
-                    message.MessageId, message.Type, topic);
             }
             catch (Exception ex)
             {
@@ -105,25 +99,54 @@ public class OutboxPublisherWorker : BackgroundService
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
-    private string GetTopicForMessageType(string messageType)
+    private async Task<(string Topic, bool Success)> PublishMessageByTypeAsync(
+        IEventPublisher publisher, 
+        string messageType, 
+        string payload, 
+        string? correlationId,
+        CancellationToken cancellationToken)
     {
-        return messageType switch
+        // Direct type mapping without reflection
+        switch (messageType)
         {
-            nameof(PaymentSucceededEvent) => _settings.PaymentSucceededTopic,
-            nameof(PaymentFailedEvent) => _settings.PaymentFailedTopic,
-            nameof(RefundCompletedEvent) => _settings.RefundCompletedTopic,
-            nameof(RefundFailedEvent) => _settings.RefundFailedTopic,
-            _ => throw new InvalidOperationException($"No topic configured for message type: {messageType}")
-        };
-    }
-
-    private async Task PublishEventAsync(IEventPublisher publisher, string topic, object eventObject, string? correlationId, CancellationToken cancellationToken)
-    {
-        var method = typeof(IEventPublisher).GetMethod(nameof(IEventPublisher.PublishAsync));
-        var genericMethod = method!.MakeGenericMethod(eventObject.GetType());
+            case nameof(PaymentSucceededEvent):
+                var paymentSucceeded = JsonSerializer.Deserialize<PaymentSucceededEvent>(payload, s_jsonOptions);
+                if (paymentSucceeded != null)
+                {
+                    await publisher.PublishAsync(_settings.PaymentSucceededTopic, paymentSucceeded, correlationId, cancellationToken);
+                    return (_settings.PaymentSucceededTopic, true);
+                }
+                break;
+                
+            case nameof(PaymentFailedEvent):
+                var paymentFailed = JsonSerializer.Deserialize<PaymentFailedEvent>(payload, s_jsonOptions);
+                if (paymentFailed != null)
+                {
+                    await publisher.PublishAsync(_settings.PaymentFailedTopic, paymentFailed, correlationId, cancellationToken);
+                    return (_settings.PaymentFailedTopic, true);
+                }
+                break;
+                
+            case nameof(RefundCompletedEvent):
+                var refundCompleted = JsonSerializer.Deserialize<RefundCompletedEvent>(payload, s_jsonOptions);
+                if (refundCompleted != null)
+                {
+                    await publisher.PublishAsync(_settings.RefundCompletedTopic, refundCompleted, correlationId, cancellationToken);
+                    return (_settings.RefundCompletedTopic, true);
+                }
+                break;
+                
+            case nameof(RefundFailedEvent):
+                var refundFailed = JsonSerializer.Deserialize<RefundFailedEvent>(payload, s_jsonOptions);
+                if (refundFailed != null)
+                {
+                    await publisher.PublishAsync(_settings.RefundFailedTopic, refundFailed, correlationId, cancellationToken);
+                    return (_settings.RefundFailedTopic, true);
+                }
+                break;
+        }
         
-        var task = (Task)genericMethod.Invoke(publisher, new object?[] { topic, eventObject, correlationId, cancellationToken })!;
-        await task;
+        return (string.Empty, false);
     }
 }
 

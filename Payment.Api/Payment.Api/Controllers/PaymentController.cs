@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Payment.Application.DTOs;
@@ -64,12 +66,13 @@ public class PaymentController : ControllerBase
             PaymentAmount = form.PaymentAmount
         };
 
-        // Verify hash (important for security)
+        // Verify hash (important for security) - using constant-time comparison
         var expectedHash = GenerateCallbackHash(callback);
-        if (!callback.Hash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+        if (!CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(callback.Hash),
+            Encoding.UTF8.GetBytes(expectedHash)))
         {
-            _logger.LogWarning("Invalid hash for callback. MerchantOid: {MerchantOid}, Expected: {Expected}, Received: {Received}",
-                callback.MerchantOid, expectedHash, callback.Hash);
+            _logger.LogWarning("Invalid hash for callback. MerchantOid: {MerchantOid}", callback.MerchantOid);
             
             // PayTR expects "OK" response even for invalid callbacks to stop retrying
             return Content("OK");
@@ -92,17 +95,20 @@ public class PaymentController : ControllerBase
     private string GenerateCallbackHash(PaytrCallbackRequest callback)
     {
         // Hash = base64(hmac_sha256(merchant_key, merchant_oid + merchant_salt + status + total_amount))
-        var hashStr = string.Concat(
-            callback.MerchantOid,
-            _paytrSettings.MerchantSalt,
-            callback.Status,
-            callback.TotalAmount.ToString("F0")
-        );
+        var hashBuilder = new StringBuilder(128);
+        hashBuilder.Append(callback.MerchantOid);
+        hashBuilder.Append(_paytrSettings.MerchantSalt);
+        hashBuilder.Append(callback.Status);
+        hashBuilder.Append(callback.TotalAmount.ToString("F0"));
 
-        using var hmac = new System.Security.Cryptography.HMACSHA256(
-            System.Text.Encoding.UTF8.GetBytes(_paytrSettings.MerchantKey));
-        var hash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(hashStr));
-        return Convert.ToBase64String(hash);
+        var keyBytes = Encoding.UTF8.GetBytes(_paytrSettings.MerchantKey);
+        var inputBytes = Encoding.UTF8.GetBytes(hashBuilder.ToString());
+        
+        // Use stackalloc for small buffers to avoid heap allocation
+        Span<byte> hashBuffer = stackalloc byte[32];
+        HMACSHA256.HashData(keyBytes, inputBytes, hashBuffer);
+        
+        return Convert.ToBase64String(hashBuffer);
     }
 
     /// <summary>
@@ -125,7 +131,7 @@ public class PaymentController : ControllerBase
 
         if (!success)
         {
-            if (error?.Contains("not found") == true)
+            if (error?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true)
                 return NotFound(new { message = error });
             
             return BadRequest(new { message = error, refund });
@@ -165,7 +171,7 @@ public class PaymentController : ControllerBase
 /// <summary>
 /// Form model for PayTR callback (form-urlencoded)
 /// </summary>
-public class PaytrCallbackFormModel
+public sealed class PaytrCallbackFormModel
 {
     [FromForm(Name = "merchant_oid")]
     public string? MerchantOid { get; set; }

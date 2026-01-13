@@ -39,7 +39,9 @@ public class PaymentRepository : IPaymentRepository
 
     public async Task<bool> ExistsByOrderIdAsync(Guid orderId, CancellationToken cancellationToken = default)
     {
-        return await _context.Payments.AnyAsync(p => p.OrderId == orderId, cancellationToken);
+        return await _context.Payments
+            .AsNoTracking()
+            .AnyAsync(p => p.OrderId == orderId, cancellationToken);
     }
 }
 
