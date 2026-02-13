@@ -14,7 +14,7 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
 
         builder.Property(c => c.Id)
             .HasColumnName("id")
-            .HasDefaultValueSql("gen_random_uuid()");
+            .HasDefaultValueSql("NEWID()");
 
         builder.Property(c => c.Name)
             .HasColumnName("name")
@@ -33,7 +33,7 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
 
         builder.Property(c => c.Description)
             .HasColumnName("description")
-            .HasColumnType("text");
+            .HasColumnType("nvarchar(max)");
 
         builder.Property(c => c.DisplayOrder)
             .HasColumnName("display_order")
@@ -41,11 +41,11 @@ public class CategoryConfiguration : IEntityTypeConfiguration<Category>
 
         builder.Property(c => c.CreatedAt)
             .HasColumnName("created_at")
-            .HasDefaultValueSql("CURRENT_TIMESTAMP");
+            .HasDefaultValueSql("GETUTCDATE()");
 
         builder.Property(c => c.UpdatedAt)
             .HasColumnName("updated_at")
-            .HasDefaultValueSql("CURRENT_TIMESTAMP");
+            .HasDefaultValueSql("GETUTCDATE()");
 
         // Self-referencing relationship (Parent-Child)
         builder.HasOne(c => c.Parent)

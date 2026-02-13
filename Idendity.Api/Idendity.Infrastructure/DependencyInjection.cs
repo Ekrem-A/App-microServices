@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Idendity.Infrastructure;
@@ -23,7 +24,7 @@ public static class DependencyInjection
     {
         // Configure DbContext
         services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseNpgsql(
+            options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
                 b => b.MigrationsAssembly(typeof(ApplicationDbContext).Assembly.FullName)));
 
@@ -129,6 +130,46 @@ public static class DependencyInjection
                     Description = $"{roleName} role for the e-commerce platform"
                 });
             }
+        }
+    }
+
+    public static async Task SeedAdminUserAsync(IServiceProvider serviceProvider)
+    {
+        using var scope = serviceProvider.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUserIdentity>>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<ApplicationDbContext>>();
+
+        const string adminEmail = "admin@ecommerce.com";
+        const string adminPassword = "Admin@123456";
+
+        var existingAdmin = await userManager.FindByEmailAsync(adminEmail);
+        if (existingAdmin != null)
+        {
+            logger.LogInformation("Admin user already exists");
+            return;
+        }
+
+        var adminUser = new ApplicationUserIdentity
+        {
+            UserName = adminEmail,
+            Email = adminEmail,
+            FirstName = "System",
+            LastName = "Administrator",
+            EmailConfirmed = true,
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        var result = await userManager.CreateAsync(adminUser, adminPassword);
+        if (result.Succeeded)
+        {
+            await userManager.AddToRoleAsync(adminUser, Roles.Admin);
+            logger.LogInformation("Admin user created successfully: {Email}", adminEmail);
+        }
+        else
+        {
+            var errors = string.Join(", ", result.Errors.Select(e => e.Description));
+            logger.LogError("Failed to create admin user: {Errors}", errors);
         }
     }
 }

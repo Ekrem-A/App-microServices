@@ -16,30 +16,11 @@ if (!string.IsNullOrWhiteSpace(appPort))
     builder.WebHost.UseUrls($"http://+:{appPort}");
 }
 
-// Railway commonly provides DATABASE_URL for PostgreSQL. If present, we prefer it and convert to an
-// Npgsql-compatible connection string (this overrides appsettings.json).
-{
-    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-    if (!string.IsNullOrWhiteSpace(databaseUrl))
-    {
-        var uri = new Uri(databaseUrl);
-        var userInfo = uri.UserInfo.Split(':', 2);
-        var username = userInfo.Length > 0 ? Uri.UnescapeDataString(userInfo[0]) : "";
-        var password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : "";
-        var host = uri.Host;
-        var dbPort = uri.Port > 0 ? uri.Port : 5432;
-        var database = uri.AbsolutePath.TrimStart('/');
-
-        builder.Configuration["ConnectionStrings:DefaultConnection"] =
-            $"Host={host};Port={dbPort};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true";
-    }
-}
-
-// If DATABASE_URL is not set, we fall back to ConnectionStrings:DefaultConnection from config (appsettings/env vars).
+// If ConnectionStrings:DefaultConnection is not set, throw an error.
 if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
 {
     throw new InvalidOperationException(
-        "Database connection is not configured. Set DATABASE_URL (Railway) or ConnectionStrings:DefaultConnection.");
+        "Database connection is not configured. Set ConnectionStrings:DefaultConnection.");
 }
 
 // Configure Serilog
@@ -157,10 +138,10 @@ builder.Services.AddCors(options =>
 
 // Configure Health Checks
 builder.Services.AddHealthChecks()
-    .AddNpgSql(
+    .AddSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection") ?? "",
-        name: "postgres",
-        tags: new[] { "db", "sql", "postgres" });
+        name: "sqlserver",
+        tags: new[] { "db", "sql", "sqlserver" });
 
 // Add Dapr client (for service-to-service communication)
 builder.Services.AddDaprClient();
@@ -232,10 +213,13 @@ using (var scope = app.Services.CreateScope())
     {
         await Idendity.Infrastructure.DependencyInjection.SeedRolesAsync(scope.ServiceProvider);
         Log.Information("Roles seeded successfully");
+        
+        await Idendity.Infrastructure.DependencyInjection.SeedAdminUserAsync(scope.ServiceProvider);
+        Log.Information("Admin user seeded successfully");
     }
     catch (Exception ex)
     {
-        Log.Error(ex, "An error occurred while seeding roles");
+        Log.Error(ex, "An error occurred while seeding roles or admin user");
     }
 }
 
