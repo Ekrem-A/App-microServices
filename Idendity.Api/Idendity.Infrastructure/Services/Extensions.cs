@@ -1,4 +1,5 @@
 using KubernetesLessons.ServiceDefaults;
+using Microsoft.Extensions.Http;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Configuration;
