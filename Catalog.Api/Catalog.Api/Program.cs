@@ -5,6 +5,9 @@ using Catalog.Infrastructure.Data;
 using Catalog.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 try
 {
@@ -47,6 +50,55 @@ try
     builder.Host.UseSerilog();
 
     Log.Information("🚀 Starting Catalog API...");
+
+// ═══════════════════════════════════════════════════════════
+// OPENTELEMETRY CONFIGURATION
+// ═══════════════════════════════════════════════════════════
+
+var serviceName = "Catalog.Api";
+var serviceVersion = "1.0.0";
+var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://jaeger:4317";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName: serviceName, serviceVersion: serviceVersion)
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment"] = builder.Environment.EnvironmentName,
+            ["host.name"] = Environment.MachineName
+        }))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.Filter = httpContext => 
+                !httpContext.Request.Path.StartsWithSegments("/health") &&
+                !httpContext.Request.Path.StartsWithSegments("/swagger");
+        })
+        .AddHttpClientInstrumentation(options =>
+        {
+            options.RecordException = true;
+        })
+        .AddEntityFrameworkCoreInstrumentation(options =>
+        {
+            options.SetDbStatementForText = true;
+            options.SetDbStatementForStoredProcedure = true;
+        })
+        .AddOtlpExporter(options =>
+        {
+            options.Endpoint = new Uri(otlpEndpoint);
+        }))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter("Catalog.Api")
+        .AddOtlpExporter(options =>
+        {
+            options.Endpoint = new Uri(otlpEndpoint);
+        }));
+
+Log.Information("📊 OpenTelemetry configured with endpoint: {Endpoint}", otlpEndpoint);
 
 // ═══════════════════════════════════════════════════════════
 // SECURITY CONFIGURATION

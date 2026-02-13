@@ -16,17 +16,17 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Database (PostgreSQL for Railway)
+        // Database (SQL Server)
         services.AddDbContext<CatalogDbContext>(options =>
         {
             var connectionString = configuration.GetConnectionString("DefaultConnection");
 
-            options.UseNpgsql(connectionString, npgsqlOptions =>
+            options.UseSqlServer(connectionString, sqlOptions =>
             {
-                npgsqlOptions.EnableRetryOnFailure(
+                sqlOptions.EnableRetryOnFailure(
                     maxRetryCount: 5,
                     maxRetryDelay: TimeSpan.FromSeconds(10),
-                    errorCodesToAdd: null
+                    errorNumbersToAdd: null
                 );
             });
         });

@@ -1,43 +1,46 @@
 services:
-  identity-api:
+  idendity-api:
     build:
       context: .
       dockerfile: Idendity.Api/Dockerfile
-    container_name: identity-api
+    container_name: idendity-api
     ports:
-      - "5000:8080"
+      - "5002:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=IdentityDb;Username=postgres;Password=postgres123
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=idendity-sqlserver;Database=IdendityDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
       - RUN_MIGRATIONS=true
     depends_on:
-      postgres:
+      idendity-sqlserver:
         condition: service_healthy
     networks:
-      - identity-network
+      - idendity-network
 
-  postgres:
-    image: postgres:16-alpine
-    container_name: identity-postgres
-    ports:
-      - "5432:5432"
+  idendity-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: idendity-sqlserver
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres123
-      - POSTGRES_DB=IdentityDb
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1435:1433"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d IdentityDb"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - idendity_sqlserver_data:/var/opt/mssql
     networks:
-      - identity-network
+      - idendity-network
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "YourStrong@Passw0rd" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 networks:
-  identity-network:
+  idendity-network:
     driver: bridge
 
 volumes:
-  postgres-data:
+  idendity_sqlserver_data:
+    driver: local
