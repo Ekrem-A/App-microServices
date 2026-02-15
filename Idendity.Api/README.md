@@ -77,51 +77,6 @@ docker build -t identity-service -f Idendity.Api/Dockerfile .
 docker run -p 8080:8080 identity-service
 ```
 
-## Railway + PostgreSQL ile Deploy (Docker)
-
-Bu proje artık **PostgreSQL** kullanacak şekilde ayarlanmıştır.
-
-### Railway'de PostgreSQL oluşturma
-
-Railway projesinde **Add → Database → PostgreSQL** ekle.
-
-Railway, uygulama servisinde genelde otomatik olarak şu environment variable’ı verir:
-
-- `DATABASE_URL`
-
-Uygulama, `ConnectionStrings:DefaultConnection` boş ise `DATABASE_URL`’ı otomatik olarak Postgres connection string’e çevirir.
-
-### Railway'de Docker ile deploy
-
-1) Railway’de yeni servis oluştur (Dockerfile ile).
-2) Repository olarak bu projeyi bağla.
-3) Environment variables:
-   - **`DATABASE_URL`** (PostgreSQL tarafından otomatik gelir)
-   - **`Jwt__SecretKey`** (en az 32 karakter)
-   - (opsiyonel) `Jwt__Issuer`, `Jwt__Audience`
-   - (opsiyonel) **`RUN_MIGRATIONS=true`** (container açılışında migration otomatik uygulasın)
-
-### PostgreSQL Migration
-
-SQL Server migration’ları Postgres ile uyumlu değildir. PostgreSQL için migration’ı yeniden üret:
-
-```bash
-cd Idendity.Api
-
-# (gerekirse) tooling
-dotnet tool install --global dotnet-ef
-
-# Yeni migration (PostgreSQL)
-dotnet ef migrations add InitialCreate_Postgres --project ..\Idendity.Infrastructure --startup-project .\Idendity.Api
-
-# DB'ye uygula
-dotnet ef database update --project ..\Idendity.Infrastructure --startup-project .\Idendity.Api
-```
-
-Railway’de migration’ı uygulamak için en basit yöntem:
-- Deploy öncesi local’de `database update` çalıştırıp DB’yi hazırlamak, ya da
-- Railway “deploy command”/“pre-deploy” adımı kullanıyorsan orada `dotnet ef database update` çalıştırmak.
-
 ## Yapılandırma
 
 ### appsettings.json
