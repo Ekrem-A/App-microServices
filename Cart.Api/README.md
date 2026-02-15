@@ -217,9 +217,8 @@ Cart.Api/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PORT` | HTTP port (Railway support) | 8080 |
-| `REDIS_URL` | Redis connection URL | localhost:6379 |
 | `ASPNETCORE_ENVIRONMENT` | Environment name | Production |
+| `Redis__ConnectionString` | Redis connection string | localhost:6379 |
 
 ## Docker Support
 
@@ -231,7 +230,7 @@ docker build -t cart-api -f Cart.Api/Dockerfile .
 ### Run Container
 ```bash
 docker run -d -p 8080:8080 \
-  -e REDIS_URL=redis://your-redis-host:6379 \
+  -e Redis__ConnectionString=your-redis-host:6379 \
   cart-api
 ```
 
@@ -240,7 +239,7 @@ docker run -d -p 8080:8080 \
 - Alpine-based images for minimal footprint
 - Non-root user for security
 - Health check endpoints
-- Railway platform compatible
+- Kubernetes ready
 
 ## Features
 
@@ -254,7 +253,7 @@ docker run -d -p 8080:8080 \
 - ? Health checks for monitoring
 - ? Swagger/OpenAPI documentation
 - ? Docker containerization
-- ? Railway deployment ready
+- ? Kubernetes deployment ready
 
 ## License
 

@@ -11,13 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 Console.WriteLine("===========================================");
 Console.WriteLine("Cart.Api Starting...");
 Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
-Console.WriteLine($"REDIS_URL exists: {!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("REDIS_URL"))}");
 Console.WriteLine("===========================================");
-
-// Railway PORT support
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-Console.WriteLine($"Configuring to listen on port: {port}");
-builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // ================================
 // OpenTelemetry
@@ -71,7 +65,7 @@ builder.Services.AddApplication();
 // Add Infrastructure layer (Redis, Kafka)
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// Health checks - Get Redis connection string (supports Railway REDIS_URL)
+// Health checks
 var redisConnectionString = GetRedisConnectionString(builder.Configuration);
 builder.Services.AddHealthChecks()
     .AddRedis(redisConnectionString, name: "redis", tags: new[] { "ready" }, timeout: TimeSpan.FromSeconds(5));
@@ -81,7 +75,6 @@ var app = builder.Build();
 // Configure the HTTP request pipeline
 app.UseExceptionHandling();
 
-// Enable Swagger in all environments for Railway
 app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
@@ -104,45 +97,14 @@ app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthC
 });
 
 Console.WriteLine("===========================================");
-Console.WriteLine($"Cart.Api is starting on port {port}");
+Console.WriteLine("Cart.Api is starting");
 Console.WriteLine("Health endpoints: /health/live, /health/ready");
 Console.WriteLine("Swagger: /swagger");
 Console.WriteLine("===========================================");
 
 app.Run();
 
-// Helper method to parse Redis connection string from Railway REDIS_URL format
 static string GetRedisConnectionString(IConfiguration configuration)
 {
-    // Check for Railway's REDIS_URL environment variable first
-    var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL");
-    
-    if (!string.IsNullOrEmpty(redisUrl))
-    {
-        // Railway format: redis://default:password@host:port
-        // StackExchange.Redis format: host:port,password=password,ssl=false
-        try
-        {
-            var uri = new Uri(redisUrl);
-            var host = uri.Host;
-            var port = uri.Port > 0 ? uri.Port : 6379;
-            var password = uri.UserInfo.Contains(':') 
-                ? uri.UserInfo.Split(':')[1] 
-                : uri.UserInfo;
-            
-            if (!string.IsNullOrEmpty(password))
-            {
-                return $"{host}:{port},password={password},abortConnect=false";
-            }
-            return $"{host}:{port},abortConnect=false";
-        }
-        catch
-        {
-            // If parsing fails, try using it as-is
-            return redisUrl;
-        }
-    }
-    
-    // Fallback to configuration
     return configuration["Redis:ConnectionString"] ?? "localhost:6379";
 }

@@ -14,21 +14,6 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     // ═══════════════════════════════════════════════════════════
-    // RAILWAY DATABASE_URL SUPPORT
-    // ═══════════════════════════════════════════════════════════
-    
-    // Railway provides DATABASE_URL in postgres:// format
-    // Convert it to .NET connection string format
-    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-    if (!string.IsNullOrEmpty(databaseUrl))
-    {
-        var uri = new Uri(databaseUrl);
-        var userInfo = uri.UserInfo.Split(':');
-        var connectionString = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
-        builder.Configuration["ConnectionStrings:DefaultConnection"] = connectionString;
-    }
-
-    // ═══════════════════════════════════════════════════════════
     // SERILOG CONFIGURATION
     // ═══════════════════════════════════════════════════════════
     
@@ -57,7 +42,7 @@ try
 
 var serviceName = "Catalog.Api";
 var serviceVersion = "1.0.0";
-var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://jaeger:4317";
+var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
@@ -300,7 +285,6 @@ using (var scope = app.Services.CreateScope())
 // ═══════════════════════════════════════════════════════════
 
 // Configure the HTTP request pipeline.
-// Enable Swagger in all environments for Railway
 app.UseSwagger();
 app.UseSwaggerUI();
 

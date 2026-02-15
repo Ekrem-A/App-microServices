@@ -39,21 +39,10 @@ builder.Services.Configure<KafkaSettings>(builder.Configuration.GetSection(Kafka
 // ================================
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
-// Support Railway's DATABASE_URL format
 if (string.IsNullOrEmpty(connectionString))
 {
-    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-    if (!string.IsNullOrEmpty(databaseUrl))
-    {
-        connectionString = ConvertDatabaseUrlToConnectionString(databaseUrl);
-        Log.Information("Using DATABASE_URL environment variable");
-    }
-}
-
-if (string.IsNullOrEmpty(connectionString))
-{
-    Log.Error("Database connection string is not configured! Set ConnectionStrings__DefaultConnection or DATABASE_URL");
-    throw new InvalidOperationException("Database connection string 'DefaultConnection' or DATABASE_URL environment variable is required.");
+    Log.Error("Database connection string is not configured! Set ConnectionStrings__DefaultConnection");
+    throw new InvalidOperationException("Database connection string 'DefaultConnection' is required.");
 }
 
 builder.Services.AddDbContext<PaymentDbContext>(options =>
@@ -119,7 +108,7 @@ else
 // OpenTelemetry Configuration
 // ================================
 var serviceName = builder.Configuration["OpenTelemetry:ServiceName"] ?? "Payment.Api";
-var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"];
+var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
@@ -139,12 +128,13 @@ builder.Services.AddOpenTelemetry()
                     !httpContext.Request.Path.StartsWithSegments("/health") &&
                     !httpContext.Request.Path.StartsWithSegments("/swagger");
             })
-            .AddHttpClientInstrumentation(options => options.RecordException = true);
-
-        if (!string.IsNullOrEmpty(otlpEndpoint))
-        {
-            tracing.AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
-        }
+            .AddHttpClientInstrumentation(options => options.RecordException = true)
+            .AddEntityFrameworkCoreInstrumentation(options =>
+            {
+                options.SetDbStatementForText = true;
+                options.SetDbStatementForStoredProcedure = true;
+            })
+            .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
     })
     .WithMetrics(metrics =>
     {
@@ -152,12 +142,8 @@ builder.Services.AddOpenTelemetry()
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddRuntimeInstrumentation()
-            .AddMeter("Payment.Api");
-
-        if (!string.IsNullOrEmpty(otlpEndpoint))
-        {
-            metrics.AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
-        }
+            .AddMeter("Payment.Api")
+            .AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
     });
 
 // ================================
@@ -210,7 +196,6 @@ app.UseSerilogRequestLogging(options =>
     };
 });
 
-// Enable Swagger in all environments for Railway
 app.UseSwagger();
 app.UseSwaggerUI();
 
@@ -240,23 +225,6 @@ catch (Exception ex)
 finally
 {
     await Log.CloseAndFlushAsync();
-}
-
-// ================================
-// Helper: Convert DATABASE_URL to SQL Server Connection String
-// ================================
-static string ConvertDatabaseUrlToConnectionString(string databaseUrl)
-{
-    // Format: sqlserver://user:password@host:port/database
-    var uri = new Uri(databaseUrl);
-    var userInfo = uri.UserInfo.Split(':');
-    var username = userInfo[0];
-    var password = userInfo.Length > 1 ? userInfo[1] : "";
-    var host = uri.Host;
-    var port = uri.Port > 0 ? uri.Port : 1433;
-    var database = uri.AbsolutePath.TrimStart('/');
-    
-    return $"Server={host},{port};Database={database};User Id={username};Password={password};TrustServerCertificate=True";
 }
 
 // ================================

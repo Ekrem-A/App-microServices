@@ -7,7 +7,6 @@ using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using Order.Api.Extensions;
 using Order.Api.Hubs;
 using Order.Api.Middleware;
 using Order.Api.Services;
@@ -19,9 +18,6 @@ using Serilog;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
-
-// Railway configuration (DATABASE_URL, PORT)
-builder.ConfigureForRailway();
 
 // Configure Serilog - replace default logging
 Log.Logger = new LoggerConfiguration()

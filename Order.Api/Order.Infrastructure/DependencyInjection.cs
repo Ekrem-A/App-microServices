@@ -49,7 +49,7 @@ public static class DependencyInjection
         // Services
         services.AddSingleton<IDateTimeService, DateTimeService>();
 
-        // Messaging - Log-based publisher for Railway (can be replaced with RabbitMQ later)
+        // Messaging - Log-based publisher (can be replaced with RabbitMQ/Kafka later)
         services.AddSingleton<IEventPublisher, LogEventPublisher>();
 
         // Background Jobs

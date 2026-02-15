@@ -5,7 +5,7 @@ namespace Cart.Infrastructure.Messaging;
 
 /// <summary>
 /// A no-operation event publisher that logs events instead of publishing to Kafka.
-/// Used when Kafka is not configured (e.g., Railway deployment without Kafka).
+/// Used when Kafka is not configured.
 /// </summary>
 public class NoOpEventPublisher : IEventPublisher
 {

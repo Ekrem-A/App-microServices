@@ -14,13 +14,6 @@ using Serilog.Sinks.Elasticsearch;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Railway sets PORT for inbound traffic. If present, listen on that port.
-var appPort = Environment.GetEnvironmentVariable("PORT");
-if (!string.IsNullOrWhiteSpace(appPort))
-{
-    builder.WebHost.UseUrls($"http://+:{appPort}");
-}
-
 // If ConnectionStrings:DefaultConnection is not set, throw an error.
 if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("DefaultConnection")))
 {
@@ -60,9 +53,9 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 builder.Host.UseSerilog();
-    
-// Add OpenTelemetry with service defaults
-builder.AddServiceDefaults();
+
+// Add health check endpoints
+builder.AddDefaultHealthChecks();
 
 // ================================
 // OpenTelemetry
@@ -271,7 +264,7 @@ app.MapSubscribeHandler(); // Dapr pub/sub endpoint
 // Map health check endpoints
 app.MapDefaultEndpoints();
 
-// Optional: run EF Core migrations automatically on startup (useful for Railway)
+// Optional: run EF Core migrations automatically on startup
 // Set RUN_MIGRATIONS=true in environment to enable.
 if (string.Equals(Environment.GetEnvironmentVariable("RUN_MIGRATIONS"), "true", StringComparison.OrdinalIgnoreCase))
 {

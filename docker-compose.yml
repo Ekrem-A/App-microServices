@@ -30,11 +30,13 @@
 services:
 
   # ==========================================
-  # OBSERVABILITY STACK
+  # OBSERVABILITY STACK (isteğe bağlı: --profile observability)
   # ==========================================
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    profiles:
+      - observability
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.18
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
@@ -55,7 +57,9 @@ services:
     restart: unless-stopped
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.12.0
+    profiles:
+      - observability
+    image: docker.elastic.co/kibana/kibana:7.17.18
     container_name: kibana
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
@@ -69,7 +73,9 @@ services:
     restart: unless-stopped
 
   apm-server:
-    image: docker.elastic.co/apm/apm-server:8.12.0
+    profiles:
+      - observability
+    image: docker.elastic.co/apm/apm-server:7.17.18
     container_name: apm-server
     command: >
       apm-server -e
@@ -77,6 +83,8 @@ services:
         -E apm-server.rum.enabled=true
         -E output.elasticsearch.hosts=["http://elasticsearch:9200"]
         -E apm-server.auth.anonymous.enabled=true
+        -E apm-server.kibana.enabled=true
+        -E apm-server.kibana.host=http://kibana:5601
     ports:
       - "8200:8200"
     depends_on:
@@ -85,14 +93,16 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8200/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 20s
+      test: ["CMD", "apm-server", "export", "config"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   otel-collector:
+    profiles:
+      - observability
     image: otel/opentelemetry-collector-contrib:0.96.0
     container_name: otel-collector
     command: ["--config=/etc/otel-config.yaml"]
@@ -101,9 +111,52 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "8889:8889"  # Prometheus exporter
     depends_on:
       apm-server:
         condition: service_healthy
+    networks:
+      - platform
+    restart: unless-stopped
+
+  prometheus:
+    profiles:
+      - observability
+    image: prom/prometheus:v2.49.1
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+    networks:
+      - platform
+    restart: unless-stopped
+
+  grafana:
+    profiles:
+      - observability
+    image: grafana/grafana:10.3.1
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
     networks:
       - platform
     restart: unless-stopped
@@ -126,7 +179,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -147,7 +200,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -168,7 +221,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -189,7 +242,7 @@ services:
     networks:
       - platform
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -250,8 +303,6 @@ services:
       - ReverseProxy__Clusters__order__Destinations__default__Address=http://order-api:8080
       - ReverseProxy__Clusters__payment__Destinations__default__Address=http://payment-api:8080
       - ReverseProxy__Clusters__cart__Destinations__default__Address=http://cart-api:8080
-    depends_on:
-      - otel-collector
     networks:
       - platform
     restart: unless-stopped
@@ -282,8 +333,6 @@ services:
         condition: service_healthy
       catalog-redis:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -304,8 +353,6 @@ services:
     depends_on:
       identity-sqlserver:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -329,8 +376,6 @@ services:
     depends_on:
       order-sqlserver:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -350,8 +395,6 @@ services:
     depends_on:
       payment-sqlserver:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -371,8 +414,6 @@ services:
     depends_on:
       cart-redis:
         condition: service_healthy
-      otel-collector:
-        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -387,6 +428,8 @@ networks:
 
 volumes:
   es_data:
+  prometheus_data:
+  grafana_data:
   catalog_sqlserver_data:
   identity_sqlserver_data:
   order_sqlserver_data:

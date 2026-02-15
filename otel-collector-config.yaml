@@ -31,6 +31,24 @@ exporters:
     tls:
       insecure: true
 
+  elasticsearch:
+    endpoints: ["http://elasticsearch:9200"]
+    logs_index: "logs-otel"
+    traces_index: "traces-otel"
+    discover:
+      on_start: true
+    retry:
+      enabled: true
+      max_requests: 5
+      initial_interval: 1s
+      max_interval: 30s
+
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: "otel"
+    resource_to_telemetry_conversion:
+      enabled: true
+
   debug:
     verbosity: basic
 
@@ -39,17 +57,17 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/apm]
+      exporters: [otlp/apm, debug]
 
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/apm]
+      exporters: [prometheus, otlp/apm, debug]
 
     logs:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/apm]
+      exporters: [otlp/apm, debug]
 
   telemetry:
     logs:

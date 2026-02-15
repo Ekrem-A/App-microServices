@@ -1,0 +1,25 @@
+# ============================================================
+# Prometheus Configuration
+# ============================================================
+# Scrapes metrics from OTEL Collector's Prometheus exporter
+# ============================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'ecommerce-platform'
+    environment: 'production'
+
+scrape_configs:
+  # OTEL Collector Prometheus exporter
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel-collector:8889']
+        labels:
+          service: 'otel-collector'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

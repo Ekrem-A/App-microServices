@@ -19,7 +19,7 @@ public static class DependencyInjection
         services.Configure<CartOptions>(configuration.GetSection(CartOptions.SectionName));
         services.Configure<KafkaOptions>(configuration.GetSection(KafkaOptions.SectionName));
 
-        // Redis connection - supports Railway REDIS_URL (Lazy initialization)
+        // Redis connection
         var redisConnectionString = GetRedisConnectionString(configuration);
         Console.WriteLine($"Redis connection string configured (host hidden for security)");
 
@@ -69,36 +69,6 @@ public static class DependencyInjection
 
     private static string GetRedisConnectionString(IConfiguration configuration)
     {
-        // Check for Railway's REDIS_URL environment variable first
-        var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL");
-        
-        if (!string.IsNullOrEmpty(redisUrl))
-        {
-            // Railway format: redis://default:password@host:port
-            // StackExchange.Redis format: host:port,password=password
-            try
-            {
-                var uri = new Uri(redisUrl);
-                var host = uri.Host;
-                var port = uri.Port > 0 ? uri.Port : 6379;
-                var password = uri.UserInfo.Contains(':') 
-                    ? uri.UserInfo.Split(':')[1] 
-                    : uri.UserInfo;
-                
-                if (!string.IsNullOrEmpty(password))
-                {
-                    return $"{host}:{port},password={password},abortConnect=false";
-                }
-                return $"{host}:{port},abortConnect=false";
-            }
-            catch
-            {
-                // If parsing fails, try using it as-is
-                return redisUrl;
-            }
-        }
-        
-        // Fallback to configuration
         return configuration.GetSection($"{RedisOptions.SectionName}:ConnectionString").Value
                ?? "localhost:6379";
     }
