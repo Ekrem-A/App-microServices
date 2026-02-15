@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace KubernetesLessons.ServiceDefaults
+namespace Idendity.Infrastructure.Services
 {
     public class OpenTelemetryOption
     {

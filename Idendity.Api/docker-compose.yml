@@ -11,9 +11,18 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Server=idendity-sqlserver;Database=IdendityDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
       - RUN_MIGRATIONS=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OpenTelemetryOption__ServiceName=IdentityApi
+      - OpenTelemetryOption__ServiceVersion=1.0.0
+      - OpenTelemetryOption__ActivitySourceName=IdentityApi.ActivitySource
+      - ElasticSearch__Uri=http://elasticsearch:9200
     depends_on:
       idendity-sqlserver:
         condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       - idendity-network
 
@@ -37,10 +46,114 @@ services:
       retries: 10
       start_period: 30s
 
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.18
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - cluster.name=docker-cluster
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - idendity-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  # Kibana
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.17.18
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - idendity-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status | grep -q 'available'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  # APM Server 7.17 (standalone, no Fleet required)
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:7.17.18
+    container_name: apm-server
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    cap_drop: ["ALL"]
+    ports:
+      - "8200:8200"
+    command: >
+      apm-server -e
+        -E apm-server.host=0.0.0.0:8200
+        -E apm-server.rum.enabled=true
+        -E output.elasticsearch.hosts=["http://elasticsearch:9200"]
+        -E setup.kibana.host="http://kibana:5601"
+        -E setup.template.settings.index.number_of_replicas=0
+        -E apm-server.kibana.enabled=true
+        -E apm-server.kibana.host="http://kibana:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    networks:
+      - idendity-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:8200/ | grep -q 'build'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+      - "8889:8889"
+      - "13133:13133"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      apm-server:
+        condition: service_healthy
+    networks:
+      - idendity-network
+    healthcheck:
+      disable: true
+
 networks:
   idendity-network:
     driver: bridge
 
 volumes:
   idendity_sqlserver_data:
+    driver: local
+  elasticsearch_data:
     driver: local

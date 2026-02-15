@@ -1,0 +1,65 @@
+apm-server:
+  host: "0.0.0.0:8200"
+  
+  # RUM (Real User Monitoring)
+  rum:
+    enabled: true
+    allow_origins: ["*"]
+    allow_headers: ["Content-Type", "Content-Encoding", "Accept"]
+    library_pattern: "node_modules|bower_components|~"
+    exclude_from_grouping: "^/webpack"
+    source_mapping:
+      enabled: true
+      
+  # OTLP support
+  auth:
+    anonymous:
+      enabled: true
+      allow_agent: ["*"]
+      allow_service: ["*"]
+      
+  # Sampling
+  sampling:
+    keep_unsampled: false
+    tail:
+      enabled: false
+
+# Elasticsearch output
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  indices:
+    - index: "apm-%{[observer.version]}-onboarding-%{+yyyy.MM.dd}"
+      when.contains:
+        processor.event: "onboarding"
+    - index: "apm-%{[observer.version]}-error-%{+yyyy.MM.dd}"
+      when.contains:
+        processor.event: "error"
+    - index: "apm-%{[observer.version]}-transaction-%{+yyyy.MM.dd}"
+      when.contains:
+        processor.event: "transaction"
+    - index: "apm-%{[observer.version]}-span-%{+yyyy.MM.dd}"
+      when.contains:
+        processor.event: "span"
+    - index: "apm-%{[observer.version]}-metric-%{+yyyy.MM.dd}"
+      when.contains:
+        processor.event: "metric"
+
+# Kibana setup
+setup:
+  kibana:
+    host: "http://kibana:5601"
+  template:
+    settings:
+      index:
+        number_of_shards: 1
+        number_of_replicas: 0
+
+# Logging
+logging:
+  level: info
+  to_files: false
+  to_stderr: true
+
+# Monitoring (disable self-monitoring to avoid noise)
+monitoring:
+  enabled: false
