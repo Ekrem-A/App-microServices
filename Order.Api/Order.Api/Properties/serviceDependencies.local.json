@@ -1,12 +1,12 @@
 {
   "dependencies": {
-    "postgresql1": {
-      "containerPorts": "5434:5434",
+    "mssql1": {
+      "containerPorts": "1436:1433",
       "secretStore": "LocalSecretsFile",
-      "containerName": "postgresql",
-      "containerImage": "postgres",
-      "type": "postgresql.container",
-      "connectionId": "ConnectionStrings:DatabaseConnection",
+      "containerName": "mssql",
+      "containerImage": "mcr.microsoft.com/mssql/server",
+      "type": "mssql.container",
+      "connectionId": "ConnectionStrings:OrderDb",
       "dynamicId": null
     }
   }

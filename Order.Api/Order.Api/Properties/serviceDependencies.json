@@ -1,8 +1,8 @@
 {
   "dependencies": {
-    "postgresql1": {
-      "type": "postgresql",
-      "connectionId": "ConnectionStrings:DatabaseConnection",
+    "mssql1": {
+      "type": "mssql",
+      "connectionId": "ConnectionStrings:OrderDb",
       "dynamicId": null
     }
   }

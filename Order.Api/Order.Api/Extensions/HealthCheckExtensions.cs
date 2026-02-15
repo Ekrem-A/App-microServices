@@ -13,13 +13,13 @@ public static class HealthCheckExtensions
     {
         var healthChecksBuilder = services.AddHealthChecks();
 
-        // Database health check - PostgreSQL for Railway
+        // Database health check - SQL Server
         var dbConnectionString = configuration.GetConnectionString("OrderDb");
         if (!string.IsNullOrWhiteSpace(dbConnectionString))
         {
-            healthChecksBuilder.AddNpgSql(
+            healthChecksBuilder.AddSqlServer(
                 dbConnectionString,
-                name: "postgresql",
+                name: "sqlserver",
                 tags: new[] { "ready", "db" });
         }
         else

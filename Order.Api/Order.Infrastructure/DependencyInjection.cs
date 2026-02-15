@@ -18,20 +18,20 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        // Database - PostgreSQL for Railway
+        // Database - SQL Server
         var connectionString = configuration.GetConnectionString("OrderDb");
         
         services.AddDbContext<OrderDbContext>(options =>
         {
             if (!string.IsNullOrWhiteSpace(connectionString))
             {
-                options.UseNpgsql(connectionString, npgsqlOptions =>
+                options.UseSqlServer(connectionString, sqlOptions =>
                 {
-                    npgsqlOptions.MigrationsAssembly(typeof(OrderDbContext).Assembly.FullName);
-                    npgsqlOptions.EnableRetryOnFailure(
+                    sqlOptions.MigrationsAssembly(typeof(OrderDbContext).Assembly.FullName);
+                    sqlOptions.EnableRetryOnFailure(
                         maxRetryCount: 5,
                         maxRetryDelay: TimeSpan.FromSeconds(30),
-                        errorCodesToAdd: null);
+                        errorNumbersToAdd: null);
                 });
             }
             else

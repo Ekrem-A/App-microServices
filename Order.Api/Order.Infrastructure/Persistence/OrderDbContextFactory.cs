@@ -26,19 +26,19 @@ public class OrderDbContextFactory : IDesignTimeDbContextFactory<OrderDbContext>
 
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            optionsBuilder.UseNpgsql(connectionString, npgsqlOptions =>
+            optionsBuilder.UseSqlServer(connectionString, sqlOptions =>
             {
-                npgsqlOptions.MigrationsAssembly(typeof(OrderDbContext).Assembly.FullName);
+                sqlOptions.MigrationsAssembly(typeof(OrderDbContext).Assembly.FullName);
             });
         }
         else
         {
-            // Railway PostgreSQL connection (Npgsql format)
-            optionsBuilder.UseNpgsql(
-                "Host=hopper.proxy.rlwy.net;Port=49271;Database=railway;Username=postgres;Password=JcIaVIYEwLcCZFcbYparNhUwSfBQttXs",
-                npgsqlOptions =>
+            // Default SQL Server connection for design-time
+            optionsBuilder.UseSqlServer(
+                "Server=localhost,1436;Database=OrderDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True",
+                sqlOptions =>
                 {
-                    npgsqlOptions.MigrationsAssembly(typeof(OrderDbContext).Assembly.FullName);
+                    sqlOptions.MigrationsAssembly(typeof(OrderDbContext).Assembly.FullName);
                 });
         }
 

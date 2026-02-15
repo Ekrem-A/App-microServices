@@ -8,7 +8,7 @@ public static class RailwayExtensions
     /// </summary>
     public static IHostApplicationBuilder ConfigureForRailway(this IHostApplicationBuilder builder)
     {
-        // Railway provides DATABASE_URL for PostgreSQL connections
+        // Railway provides DATABASE_URL for SQL Server connections
         var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
         if (!string.IsNullOrWhiteSpace(databaseUrl))
         {
@@ -28,8 +28,8 @@ public static class RailwayExtensions
     }
 
     /// <summary>
-    /// Converts Railway's DATABASE_URL format to standard PostgreSQL connection string.
-    /// DATABASE_URL format: postgresql://user:password@host:port/database
+    /// Converts Railway's DATABASE_URL format to standard SQL Server connection string.
+    /// DATABASE_URL format: sqlserver://user:password@host:port/database
     /// </summary>
     private static string ConvertDatabaseUrl(string databaseUrl)
     {
@@ -40,11 +40,10 @@ public static class RailwayExtensions
             var username = userInfo[0];
             var password = userInfo.Length > 1 ? userInfo[1] : string.Empty;
             var host = uri.Host;
-            var port = uri.Port > 0 ? uri.Port : 5432;
+            var port = uri.Port > 0 ? uri.Port : 1433;
             var database = uri.AbsolutePath.TrimStart('/');
 
-            // Npgsql 8.x requires camelCase parameter names without spaces
-            return $"Host={host};Port={port};Database={database};Username={username};Password={password};SslMode=Require;TrustServerCertificate=true";
+            return $"Server={host},{port};Database={database};User Id={username};Password={password};TrustServerCertificate=True";
         }
         catch
         {

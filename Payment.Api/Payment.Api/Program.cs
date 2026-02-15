@@ -12,7 +12,7 @@ using Payment.Infrastructure.External;
 using Payment.Infrastructure.Messaging;
 using Payment.Infrastructure.Persistence;
 using Payment.Api.Infrastructure;
-using Npgsql;
+using Microsoft.Data.SqlClient;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -58,12 +58,12 @@ if (string.IsNullOrEmpty(connectionString))
 
 builder.Services.AddDbContext<PaymentDbContext>(options =>
 {
-    options.UseNpgsql(connectionString, npgsqlOptions =>
+    options.UseSqlServer(connectionString, sqlOptions =>
     {
-        npgsqlOptions.EnableRetryOnFailure(
+        sqlOptions.EnableRetryOnFailure(
             maxRetryCount: 3,
             maxRetryDelay: TimeSpan.FromSeconds(10),
-            errorCodesToAdd: null);
+            errorNumbersToAdd: null);
     });
 });
 
@@ -119,15 +119,27 @@ else
 // OpenTelemetry Configuration
 // ================================
 var serviceName = builder.Configuration["OpenTelemetry:ServiceName"] ?? "Payment.Api";
-var otlpEndpoint = builder.Configuration["OpenTelemetry:OtlpEndpoint"];
+var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"];
 
 builder.Services.AddOpenTelemetry()
-    .ConfigureResource(resource => resource.AddService(serviceName))
+    .ConfigureResource(resource => resource
+        .AddService(serviceName)
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment"] = builder.Environment.EnvironmentName,
+            ["host.name"] = Environment.MachineName
+        }))
     .WithTracing(tracing =>
     {
         tracing
-            .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation();
+            .AddAspNetCoreInstrumentation(options =>
+            {
+                options.RecordException = true;
+                options.Filter = httpContext =>
+                    !httpContext.Request.Path.StartsWithSegments("/health") &&
+                    !httpContext.Request.Path.StartsWithSegments("/swagger");
+            })
+            .AddHttpClientInstrumentation(options => options.RecordException = true);
 
         if (!string.IsNullOrEmpty(otlpEndpoint))
         {
@@ -138,7 +150,9 @@ builder.Services.AddOpenTelemetry()
     {
         metrics
             .AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation();
+            .AddHttpClientInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddMeter("Payment.Api");
 
         if (!string.IsNullOrEmpty(otlpEndpoint))
         {
@@ -150,7 +164,7 @@ builder.Services.AddOpenTelemetry()
 // Health Checks
 // ================================
 var healthChecks = builder.Services.AddHealthChecks()
-    .AddNpgSql(connectionString, name: "postgres", tags: new[] { "db", "ready" });
+    .AddSqlServer(connectionString, name: "sqlserver", tags: new[] { "db", "ready" });
 
 if (kafkaEnabled)
 {
@@ -229,20 +243,20 @@ finally
 }
 
 // ================================
-// Helper: Convert DATABASE_URL to Npgsql Connection String
+// Helper: Convert DATABASE_URL to SQL Server Connection String
 // ================================
 static string ConvertDatabaseUrlToConnectionString(string databaseUrl)
 {
-    // Format: postgresql://user:password@host:port/database
+    // Format: sqlserver://user:password@host:port/database
     var uri = new Uri(databaseUrl);
     var userInfo = uri.UserInfo.Split(':');
     var username = userInfo[0];
     var password = userInfo.Length > 1 ? userInfo[1] : "";
     var host = uri.Host;
-    var port = uri.Port > 0 ? uri.Port : 5432;
+    var port = uri.Port > 0 ? uri.Port : 1433;
     var database = uri.AbsolutePath.TrimStart('/');
     
-    return $"Host={host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true";
+    return $"Server={host},{port};Database={database};User Id={username};Password={password};TrustServerCertificate=True";
 }
 
 // ================================
@@ -252,77 +266,90 @@ static async Task EnsureDatabaseTablesExistAsync(string connectionString)
 {
     try
     {
-        await using var connection = new NpgsqlConnection(connectionString);
+        await using var connection = new SqlConnection(connectionString);
         await connection.OpenAsync();
         
-        await using var checkCmd = new NpgsqlCommand(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'payments')", 
+        await using var checkCmd = new SqlCommand(
+            "SELECT CASE WHEN EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'payments') THEN 1 ELSE 0 END", 
             connection);
-        var exists = (bool)(await checkCmd.ExecuteScalarAsync())!;
+        var exists = (int)(await checkCmd.ExecuteScalarAsync())! == 1;
         
         if (!exists)
         {
             Log.Information("Creating database tables...");
             
             var createTablesSql = @"
-                CREATE TABLE IF NOT EXISTS payments (
-                    payment_id UUID PRIMARY KEY,
-                    order_id UUID NOT NULL UNIQUE,
-                    user_id UUID NOT NULL,
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='payments' AND xtype='U')
+                CREATE TABLE payments (
+                    payment_id UNIQUEIDENTIFIER PRIMARY KEY,
+                    order_id UNIQUEIDENTIFIER NOT NULL UNIQUE,
+                    user_id UNIQUEIDENTIFIER NOT NULL,
                     amount DECIMAL(18, 2) NOT NULL,
-                    currency VARCHAR(10) NOT NULL,
-                    status INTEGER NOT NULL,
-                    provider_reference VARCHAR(500),
-                    failure_reason VARCHAR(1000),
-                    created_at TIMESTAMP NOT NULL,
-                    updated_at TIMESTAMP NOT NULL
+                    currency NVARCHAR(10) NOT NULL,
+                    status INT NOT NULL,
+                    provider_reference NVARCHAR(500),
+                    failure_reason NVARCHAR(1000),
+                    created_at DATETIME2 NOT NULL,
+                    updated_at DATETIME2 NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS payment_attempts (
-                    attempt_id UUID PRIMARY KEY,
-                    payment_id UUID NOT NULL REFERENCES payments(payment_id) ON DELETE CASCADE,
-                    provider VARCHAR(50) NOT NULL,
-                    provider_reference VARCHAR(500),
-                    status INTEGER NOT NULL,
-                    request_payload TEXT,
-                    response_payload TEXT,
-                    error_message VARCHAR(1000),
-                    created_at TIMESTAMP NOT NULL,
-                    completed_at TIMESTAMP
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='payment_attempts' AND xtype='U')
+                CREATE TABLE payment_attempts (
+                    attempt_id UNIQUEIDENTIFIER PRIMARY KEY,
+                    payment_id UNIQUEIDENTIFIER NOT NULL REFERENCES payments(payment_id) ON DELETE CASCADE,
+                    provider NVARCHAR(50) NOT NULL,
+                    provider_reference NVARCHAR(500),
+                    status INT NOT NULL,
+                    request_payload NVARCHAR(MAX),
+                    response_payload NVARCHAR(MAX),
+                    error_message NVARCHAR(1000),
+                    created_at DATETIME2 NOT NULL,
+                    completed_at DATETIME2
                 );
 
-                CREATE TABLE IF NOT EXISTS outbox_messages (
-                    message_id UUID PRIMARY KEY,
-                    type VARCHAR(200) NOT NULL,
-                    payload TEXT NOT NULL,
-                    correlation_id VARCHAR(100),
-                    occurred_at TIMESTAMP NOT NULL,
-                    processed_at TIMESTAMP,
-                    retry_count INTEGER NOT NULL DEFAULT 0,
-                    last_error VARCHAR(2000)
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='outbox_messages' AND xtype='U')
+                CREATE TABLE outbox_messages (
+                    message_id UNIQUEIDENTIFIER PRIMARY KEY,
+                    type NVARCHAR(200) NOT NULL,
+                    payload NVARCHAR(MAX) NOT NULL,
+                    correlation_id NVARCHAR(100),
+                    occurred_at DATETIME2 NOT NULL,
+                    processed_at DATETIME2,
+                    retry_count INT NOT NULL DEFAULT 0,
+                    last_error NVARCHAR(2000)
                 );
 
-                CREATE TABLE IF NOT EXISTS refunds (
-                    refund_id UUID PRIMARY KEY,
-                    payment_id UUID NOT NULL REFERENCES payments(payment_id) ON DELETE CASCADE,
+                IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='refunds' AND xtype='U')
+                CREATE TABLE refunds (
+                    refund_id UNIQUEIDENTIFIER PRIMARY KEY,
+                    payment_id UNIQUEIDENTIFIER NOT NULL REFERENCES payments(payment_id) ON DELETE CASCADE,
                     amount DECIMAL(18, 2) NOT NULL,
-                    currency VARCHAR(10) NOT NULL,
-                    status INTEGER NOT NULL,
-                    reason VARCHAR(500),
-                    provider_reference VARCHAR(500),
-                    failure_reason VARCHAR(1000),
-                    created_at TIMESTAMP NOT NULL,
-                    completed_at TIMESTAMP
+                    currency NVARCHAR(10) NOT NULL,
+                    status INT NOT NULL,
+                    reason NVARCHAR(500),
+                    provider_reference NVARCHAR(500),
+                    failure_reason NVARCHAR(1000),
+                    created_at DATETIME2 NOT NULL,
+                    completed_at DATETIME2
                 );
 
-                CREATE INDEX IF NOT EXISTS ix_payments_order_id ON payments(order_id);
-                CREATE INDEX IF NOT EXISTS ix_payment_attempts_provider_reference ON payment_attempts(provider_reference);
-                CREATE INDEX IF NOT EXISTS ix_payment_attempts_payment_id ON payment_attempts(payment_id);
-                CREATE INDEX IF NOT EXISTS ix_outbox_pending ON outbox_messages(processed_at, occurred_at);
-                CREATE INDEX IF NOT EXISTS ix_refunds_payment_id ON refunds(payment_id);
+                IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='ix_payments_order_id')
+                CREATE INDEX ix_payments_order_id ON payments(order_id);
+
+                IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='ix_payment_attempts_provider_reference')
+                CREATE INDEX ix_payment_attempts_provider_reference ON payment_attempts(provider_reference);
+
+                IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='ix_payment_attempts_payment_id')
+                CREATE INDEX ix_payment_attempts_payment_id ON payment_attempts(payment_id);
+
+                IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='ix_outbox_pending')
+                CREATE INDEX ix_outbox_pending ON outbox_messages(processed_at, occurred_at);
+
+                IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name='ix_refunds_payment_id')
+                CREATE INDEX ix_refunds_payment_id ON refunds(payment_id);
             ";
             
-            await using var createCmd = new NpgsqlCommand(createTablesSql, connection);
+            await using var createCmd = new SqlCommand(createTablesSql, connection);
             await createCmd.ExecuteNonQueryAsync();
             
             Log.Information("Database tables created successfully");

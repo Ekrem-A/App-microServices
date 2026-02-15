@@ -5,6 +5,9 @@ using Idendity.Infrastructure;
 using Idendity.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -34,6 +37,43 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 builder.Host.UseSerilog();
+
+// ================================
+// OpenTelemetry
+// ================================
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName: "Identity.Api")
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment"] = builder.Environment.EnvironmentName,
+            ["host.name"] = Environment.MachineName
+        }))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.Filter = httpContext =>
+                !httpContext.Request.Path.StartsWithSegments("/health") &&
+                !httpContext.Request.Path.StartsWithSegments("/swagger");
+        })
+        .AddHttpClientInstrumentation(options => options.RecordException = true)
+        .AddEntityFrameworkCoreInstrumentation(options =>
+        {
+            options.SetDbStatementForText = true;
+            options.SetDbStatementForStoredProcedure = true;
+        })
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otelEndpoint)))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter("Identity.Api")
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otelEndpoint)));
+
+Log.Information("OpenTelemetry configured with endpoint: {Endpoint}", otelEndpoint);
 
 // Add services to the container
 builder.Services.AddControllers();

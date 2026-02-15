@@ -1,0 +1,395 @@
+# ============================================================
+# E-Commerce Microservices Platform - Full Docker Compose
+# ============================================================
+#
+# Architecture:
+#   [Gateway.Api] ─┐
+#   [Catalog.Api]  ─┤
+#   [Identity.Api] ─┤── OTLP (gRPC) ──▶ [OTEL Collector]
+#   [Order.Api]    ─┤                         │
+#   [Payment.Api]  ─┤                    Elastic APM
+#   [Cart.Api]     ─┘                         │
+#                                        [APM Server]
+#                                             │
+#                                      [Elasticsearch] ──▶ [Kibana]
+#
+# Ports:
+#   Gateway   : 5000
+#   Catalog   : 5001
+#   Identity  : 5002
+#   Order     : 5003
+#   Payment   : 5004
+#   Cart      : 5005
+#   Kibana    : 5601
+#   ES        : 9200
+#   APM       : 8200
+#   OTEL gRPC : 4317
+#   OTEL HTTP : 4318
+# ============================================================
+
+services:
+
+  # ==========================================
+  # OBSERVABILITY STACK
+  # ==========================================
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - platform
+    restart: unless-stopped
+
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:8.12.0
+    container_name: apm-server
+    command: >
+      apm-server -e
+        -E apm-server.host=0.0.0.0:8200
+        -E apm-server.rum.enabled=true
+        -E output.elasticsearch.hosts=["http://elasticsearch:9200"]
+        -E apm-server.auth.anonymous.enabled=true
+    ports:
+      - "8200:8200"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8200/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.96.0
+    container_name: otel-collector
+    command: ["--config=/etc/otel-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      apm-server:
+        condition: service_healthy
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ==========================================
+  # DATABASES
+  # ==========================================
+
+  catalog-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: catalog-sqlserver
+    environment:
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1434:1433"
+    volumes:
+      - catalog_sqlserver_data:/var/opt/mssql
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  identity-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: identity-sqlserver
+    environment:
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1435:1433"
+    volumes:
+      - identity_sqlserver_data:/var/opt/mssql
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  order-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: order-sqlserver
+    environment:
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1436:1433"
+    volumes:
+      - order_sqlserver_data:/var/opt/mssql
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  payment-sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: payment-sqlserver
+    environment:
+      SA_PASSWORD: "YourStrong@Passw0rd"
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: "Express"
+    ports:
+      - "1437:1433"
+    volumes:
+      - payment_sqlserver_data:/var/opt/mssql
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools*/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  catalog-redis:
+    image: redis:7-alpine
+    container_name: catalog-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - catalog_redis_data:/data
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  cart-redis:
+    image: redis:7-alpine
+    container_name: cart-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - cart_redis_data:/data
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+
+  # ==========================================
+  # API GATEWAY
+  # ==========================================
+
+  gateway-api:
+    build:
+      context: ./Gateway.Api
+      dockerfile: Gateway.Api/Dockerfile
+    container_name: gateway-api
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Docker
+      - ASPNETCORE_URLS=http://+:8080
+      - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - ReverseProxy__Clusters__catalog__Destinations__default__Address=http://catalog-api:8080
+      - ReverseProxy__Clusters__identity__Destinations__default__Address=http://identity-api:8080
+      - ReverseProxy__Clusters__order__Destinations__default__Address=http://order-api:8080
+      - ReverseProxy__Clusters__payment__Destinations__default__Address=http://payment-api:8080
+      - ReverseProxy__Clusters__cart__Destinations__default__Address=http://cart-api:8080
+    depends_on:
+      - otel-collector
+    networks:
+      - platform
+    restart: unless-stopped
+
+  # ==========================================
+  # MICROSERVICES
+  # ==========================================
+
+  catalog-api:
+    build:
+      context: ./Catalog.Api
+      dockerfile: Catalog.Api/Dockerfile
+    container_name: catalog-api
+    ports:
+      - "5001:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=catalog-sqlserver,1433;Database=catalogdb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+      - Redis__Configuration=catalog-redis:6379
+      - Redis__InstanceName=CatalogCache_
+      - Redis__Enabled=true
+      - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - ApiKeySettings__Enabled=false
+      - RateLimitSettings__Enabled=false
+    depends_on:
+      catalog-sqlserver:
+        condition: service_healthy
+      catalog-redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - platform
+    restart: unless-stopped
+
+  identity-api:
+    build:
+      context: ./Idendity.Api
+      dockerfile: Idendity.Api/Dockerfile
+    container_name: identity-api
+    ports:
+      - "5002:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=identity-sqlserver,1433;Database=IdendityDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+      - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - RUN_MIGRATIONS=true
+    depends_on:
+      identity-sqlserver:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - platform
+    restart: unless-stopped
+
+  order-api:
+    build:
+      context: ./Order.Api
+      dockerfile: Dockerfile
+    container_name: order-api
+    ports:
+      - "5003:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__OrderDb=Server=order-sqlserver,1433;Database=OrderDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+      - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - Database__AutoMigrate=true
+      - Authentication__SecretKey=SuperSecretKeyForDevelopment12345678
+      - Authentication__Audience=order-api
+      - EnableSwagger=true
+    depends_on:
+      order-sqlserver:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - platform
+    restart: unless-stopped
+
+  payment-api:
+    build:
+      context: ./Payment.Api
+      dockerfile: Dockerfile
+    container_name: payment-api
+    ports:
+      - "5004:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__DefaultConnection=Server=payment-sqlserver,1433;Database=PaymentDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
+      - OpenTelemetry__Endpoint=http://otel-collector:4317
+    depends_on:
+      payment-sqlserver:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - platform
+    restart: unless-stopped
+
+  cart-api:
+    build:
+      context: ./Cart.Api
+      dockerfile: Cart.Api/Dockerfile
+    container_name: cart-api
+    ports:
+      - "5005:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - Redis__ConnectionString=cart-redis:6379
+      - OpenTelemetry__Endpoint=http://otel-collector:4317
+    depends_on:
+      cart-redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - platform
+    restart: unless-stopped
+
+# ==========================================
+# NETWORKS & VOLUMES
+# ==========================================
+
+networks:
+  platform:
+    driver: bridge
+
+volumes:
+  es_data:
+  catalog_sqlserver_data:
+  identity_sqlserver_data:
+  order_sqlserver_data:
+  payment_sqlserver_data:
+  catalog_redis_data:
+  cart_redis_data:

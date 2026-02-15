@@ -1,6 +1,9 @@
 using Cart.Api.Middleware;
 using Cart.Application;
 using Cart.Infrastructure;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +18,39 @@ Console.WriteLine("===========================================");
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 Console.WriteLine($"Configuring to listen on port: {port}");
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
+// ================================
+// OpenTelemetry
+// ================================
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName: "Cart.Api")
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment"] = builder.Environment.EnvironmentName,
+            ["host.name"] = Environment.MachineName
+        }))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.Filter = httpContext =>
+                !httpContext.Request.Path.StartsWithSegments("/health") &&
+                !httpContext.Request.Path.StartsWithSegments("/swagger");
+        })
+        .AddHttpClientInstrumentation(options => options.RecordException = true)
+        .AddRedisInstrumentation()
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otelEndpoint)))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter("Cart.Api")
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otelEndpoint)));
+
+Console.WriteLine($"OpenTelemetry configured with endpoint: {otelEndpoint}");
 
 // Add services to the container
 builder.Services.AddControllers();

@@ -4,6 +4,9 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Order.Api.Extensions;
 using Order.Api.Hubs;
 using Order.Api.Middleware;
@@ -31,6 +34,43 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog(Log.Logger, dispose: true);
 builder.Logging.ClearProviders(); // Remove default console logger to prevent duplicates
+
+// ================================
+// OpenTelemetry
+// ================================
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource
+        .AddService(serviceName: "Order.Api")
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment"] = builder.Environment.EnvironmentName,
+            ["host.name"] = Environment.MachineName
+        }))
+    .WithTracing(tracing => tracing
+        .AddAspNetCoreInstrumentation(options =>
+        {
+            options.RecordException = true;
+            options.Filter = httpContext =>
+                !httpContext.Request.Path.StartsWithSegments("/health") &&
+                !httpContext.Request.Path.StartsWithSegments("/swagger");
+        })
+        .AddHttpClientInstrumentation(options => options.RecordException = true)
+        .AddEntityFrameworkCoreInstrumentation(options =>
+        {
+            options.SetDbStatementForText = true;
+            options.SetDbStatementForStoredProcedure = true;
+        })
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otelEndpoint)))
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddMeter("Order.Api")
+        .AddOtlpExporter(options => options.Endpoint = new Uri(otelEndpoint)));
+
+Log.Information("OpenTelemetry configured with endpoint: {Endpoint}", otelEndpoint);
 
 // Add services to the container.
 builder.Services.AddHttpContextAccessor();

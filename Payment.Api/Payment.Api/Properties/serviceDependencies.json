@@ -3,9 +3,9 @@
     "secrets1": {
       "type": "secrets"
     },
-    "postgresql1": {
-      "type": "postgresql",
-      "connectionId": "ConnectionStrings:DatabaseConnection",
+    "mssql1": {
+      "type": "mssql",
+      "connectionId": "ConnectionStrings:DefaultConnection",
       "dynamicId": null
     }
   }

@@ -1,0 +1,56 @@
+# ============================================================
+# OpenTelemetry Collector Configuration
+# ============================================================
+# All microservices send OTLP data here (gRPC :4317, HTTP :4318)
+# Collector batches and forwards to Elastic APM Server
+# APM Server stores in Elasticsearch, Kibana visualizes
+# ============================================================
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+exporters:
+  otlp/apm:
+    endpoint: "http://apm-server:8200"
+    tls:
+      insecure: true
+
+  debug:
+    verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/apm]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/apm]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/apm]
+
+  telemetry:
+    logs:
+      level: info
