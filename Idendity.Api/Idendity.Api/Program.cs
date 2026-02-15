@@ -6,6 +6,8 @@ using Idendity.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using Serilog;
+using Serilog.Events;
+using Serilog.Sinks.Elasticsearch;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,17 +25,41 @@ if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("Default
         "Database connection is not configured. Set ConnectionStrings:DefaultConnection.");
 }
 
-// Configure Serilog
+// Configure Serilog with Elasticsearch
+var elasticsearchUri = builder.Configuration["ElasticSearch:Uri"] ?? "http://localhost:9200";
+
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
     .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithThreadId()
     .Enrich.WithProperty("Application", "IdentityService")
     .Enrich.WithProperty("Environment", builder.Environment.EnvironmentName)
     .WriteTo.Console(outputTemplate: 
         "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.Elasticsearch(new ElasticsearchSinkOptions(new Uri(elasticsearchUri))
+    {
+        AutoRegisterTemplate = true,
+        AutoRegisterTemplateVersion = AutoRegisterTemplateVersion.ESv7,
+        IndexFormat = $"identity-api-logs-{builder.Environment.EnvironmentName.ToLower()}-{DateTime.UtcNow:yyyy-MM}",
+        NumberOfReplicas = 0,
+        NumberOfShards = 1,
+        EmitEventFailure = EmitEventFailureHandling.WriteToSelfLog | EmitEventFailureHandling.RaiseCallback,
+        FailureCallback = (logEvent, exception) => Console.WriteLine($"Unable to submit event to Elasticsearch: {exception?.Message}"),
+        ModifyConnectionSettings = conn =>
+        {
+            conn.ServerCertificateValidationCallback((sender, certificate, chain, errors) => true);
+            return conn;
+        }
+    })
     .CreateLogger();
 
 builder.Host.UseSerilog();
+    
+// Add OpenTelemetry with service defaults
+builder.AddServiceDefaults();
 
 // Add services to the container
 builder.Services.AddControllers();
@@ -136,13 +162,6 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Configure Health Checks
-builder.Services.AddHealthChecks()
-    .AddSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection") ?? "",
-        name: "sqlserver",
-        tags: new[] { "db", "sql", "sqlserver" });
-
 // Add Dapr client (for service-to-service communication)
 builder.Services.AddDaprClient();
 
@@ -150,6 +169,23 @@ var app = builder.Build();
 
 // Global exception handling (should be first)
 app.UseExceptionHandling();
+
+// Add Serilog request logging
+app.UseSerilogRequestLogging(options =>
+{
+    options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+    {
+        diagnosticContext.Set("RequestHost", httpContext.Request.Host.Value);
+        diagnosticContext.Set("RequestScheme", httpContext.Request.Scheme);
+        diagnosticContext.Set("UserAgent", httpContext.Request.Headers["User-Agent"].ToString());
+        diagnosticContext.Set("ClientIP", httpContext.Connection.RemoteIpAddress?.ToString());
+        
+        if (httpContext.User.Identity?.IsAuthenticated == true)
+        {
+            diagnosticContext.Set("UserId", httpContext.User.FindFirst("sub")?.Value);
+        }
+    };
+});
 
 // Audit logging
 app.UseAuditLogging();
@@ -192,8 +228,8 @@ app.UseCloudEvents();
 app.MapControllers();
 app.MapSubscribeHandler(); // Dapr pub/sub endpoint
 
-// Health check endpoints
-app.MapHealthChecks("/health");
+// Map health check endpoints
+app.MapDefaultEndpoints();
 
 // Optional: run EF Core migrations automatically on startup (useful for Railway)
 // Set RUN_MIGRATIONS=true in environment to enable.
@@ -225,4 +261,15 @@ using (var scope = app.Services.CreateScope())
 
 Log.Information("Identity API starting up on {Environment} environment", app.Environment.EnvironmentName);
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

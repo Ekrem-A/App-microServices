@@ -1,23 +1,21 @@
-using KubernetesLessons.ServiceDefaults;
-using Microsoft.Extensions.Http;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Idendity.Infrastructure.Services;
 
 namespace Microsoft.Extensions.Hosting;
 
-// Adds common Aspire services: service discovery, resilience, health checks, and OpenTelemetry.
-// This project should be referenced by each service project in your solution.
-// To learn more about using this project, see https://aka.ms/dotnet/aspire/service-defaults
+/// <summary>
+/// Extension methods for configuring OpenTelemetry, service discovery, resilience, and health checks.
+/// </summary>
 public static class Extensions
 {
     private const string HealthEndpointPath = "/health";
@@ -26,9 +24,7 @@ public static class Extensions
     public static TBuilder AddServiceDefaults<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
         builder.ConfigureOpenTelemetry();
-
         builder.AddDefaultHealthChecks();
-
         builder.Services.AddServiceDiscovery();
 
         builder.Services.ConfigureHttpClientDefaults(http =>
@@ -40,87 +36,148 @@ public static class Extensions
             http.AddServiceDiscovery();
         });
 
-        // Uncomment the following to restrict the allowed schemes for service discovery.
-        // builder.Services.Configure<ServiceDiscoveryOptions>(options =>
-        // {
-        //     options.AllowedSchemes = ["https"];
-        // });
-
         return builder;
     }
 
     public static TBuilder ConfigureOpenTelemetry<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
         builder.Services.Configure<OpenTelemetryOption>(builder.Configuration.GetSection("OpenTelemetryOption"));
-        var openTelemetryConstants =
-            (builder.Configuration.GetSection("OpenTelemetryOption").Get<OpenTelemetryOption>())!;
 
-        ActivitySourceProvider.Source =
-            new System.Diagnostics.ActivitySource(openTelemetryConstants.ActivitySourceName);
+        var openTelemetryOptions = builder.Configuration.GetSection("OpenTelemetryOption").Get<OpenTelemetryOption>()
+            ?? new OpenTelemetryOption
+            {
+                ServiceName = "IdentityApi",
+                ServiceVersion = "1.0.0",
+                ActivitySourceName = "IdentityApi.ActivitySource"
+            };
 
-        builder.Services.AddOpenTelemetry().WithTracing(options =>
+        ActivitySourceProvider.Source = new System.Diagnostics.ActivitySource(openTelemetryOptions.ActivitySourceName);
+
+        var otelBuilder = builder.Services.AddOpenTelemetry();
+
+        // Configure Tracing
+        otelBuilder.WithTracing(tracing =>
         {
-            options.AddSource(openTelemetryConstants.ActivitySourceName)
+            tracing
+                .AddSource(openTelemetryOptions.ActivitySourceName)
                 .ConfigureResource(resource =>
                 {
-                    resource.AddService(openTelemetryConstants.ServiceName,
-                        serviceVersion: openTelemetryConstants.ServiceVersion);
+                    resource.AddService(
+                        serviceName: openTelemetryOptions.ServiceName,
+                        serviceVersion: openTelemetryOptions.ServiceVersion);
+                    resource.AddAttributes(new Dictionary<string, object>
+                    {
+                        ["deployment.environment"] = builder.Environment.EnvironmentName
+                    });
+                })
+                .AddAspNetCoreInstrumentation(options =>
+                {
+                    options.RecordException = true;
+                    options.Filter = httpContext =>
+                        !httpContext.Request.Path.StartsWithSegments("/health") &&
+                        !httpContext.Request.Path.StartsWithSegments("/alive");
+                })
+                .AddHttpClientInstrumentation(options =>
+                {
+                    options.RecordException = true;
+                })
+                .AddEntityFrameworkCoreInstrumentation(options =>
+                {
+                    options.SetDbStatementForText = true;
+                    options.SetDbStatementForStoredProcedure = true;
                 });
-            options.AddAspNetCoreInstrumentation();
-            options.AddHttpClientInstrumentation();
 
-            options.AddEntityFrameworkCoreInstrumentation();
-            options.AddRedisInstrumentation(redisOptions => { redisOptions.SetVerboseDatabaseStatements = true; });
-
-            options.AddConsoleExporter();
-
-            var exporter = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
-            if (!string.IsNullOrEmpty(exporter))
+            // Add Redis instrumentation if Redis is configured
+            try
             {
-                options.AddOtlpExporter(x => { x.Endpoint = new Uri(exporter); });
+                tracing.AddRedisInstrumentation(redisOptions =>
+                {
+                    redisOptions.SetVerboseDatabaseStatements = true;
+                });
             }
-        }).WithMetrics(metric =>
-        {
-            metric.ConfigureResource(resource =>
+            catch
             {
-                resource.AddService(openTelemetryConstants.ServiceName,
-                    serviceVersion: openTelemetryConstants.ServiceVersion);
-            });
-
-
-            metric.AddAspNetCoreInstrumentation();
-            metric.AddHttpClientInstrumentation();
-            metric.AddRuntimeInstrumentation();
-            metric.AddConsoleExporter();
-            var exporter = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
-            if (!string.IsNullOrEmpty(exporter))
-            {
-                metric.AddOtlpExporter(x => { x.Endpoint = new Uri(exporter); });
+                // Redis not configured, skip
             }
-        }).WithLogging(logging =>
-        {
-            logging.ConfigureResource(resource =>
-            {
-                resource.AddService(openTelemetryConstants.ServiceName,
-                    serviceVersion: openTelemetryConstants.ServiceVersion);
-            });
 
-            var exporter = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
-            if (!string.IsNullOrEmpty(exporter))
+            // Console exporter for development
+            if (builder.Environment.IsDevelopment())
             {
-                logging.AddOtlpExporter(x => { x.Endpoint = new Uri(exporter); });
+                tracing.AddConsoleExporter();
+            }
+
+            // OTLP exporter for production (OpenTelemetry Collector)
+            var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+            if (!string.IsNullOrEmpty(otlpEndpoint))
+            {
+                tracing.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = new Uri(otlpEndpoint);
+                });
             }
         });
 
+        // Configure Metrics
+        otelBuilder.WithMetrics(metrics =>
+        {
+            metrics
+                .ConfigureResource(resource =>
+                {
+                    resource.AddService(
+                        serviceName: openTelemetryOptions.ServiceName,
+                        serviceVersion: openTelemetryOptions.ServiceVersion);
+                })
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddRuntimeInstrumentation()
+                .AddMeter("Microsoft.AspNetCore.Hosting")
+                .AddMeter("Microsoft.AspNetCore.Server.Kestrel")
+                .AddMeter("System.Net.Http");
+
+            // Console exporter for development
+            if (builder.Environment.IsDevelopment())
+            {
+                metrics.AddConsoleExporter();
+            }
+
+            // OTLP exporter
+            var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+            if (!string.IsNullOrEmpty(otlpEndpoint))
+            {
+                metrics.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = new Uri(otlpEndpoint);
+                });
+            }
+        });
+
+        // Configure Logging
+        otelBuilder.WithLogging(logging =>
+        {
+            logging.ConfigureResource(resource =>
+            {
+                resource.AddService(
+                    serviceName: openTelemetryOptions.ServiceName,
+                    serviceVersion: openTelemetryOptions.ServiceVersion);
+            });
+
+            // OTLP exporter
+            var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+            if (!string.IsNullOrEmpty(otlpEndpoint))
+            {
+                logging.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = new Uri(otlpEndpoint);
+                });
+            }
+        });
 
         return builder;
     }
 
-
     public static TBuilder AddDefaultHealthChecks<TBuilder>(this TBuilder builder) where TBuilder : IHostApplicationBuilder
     {
         builder.Services.AddHealthChecks()
-            // Add a default liveness check to ensure app is responsive
             .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);
 
         return builder;
@@ -128,19 +185,14 @@ public static class Extensions
 
     public static WebApplication MapDefaultEndpoints(this WebApplication app)
     {
-        // Adding health checks endpoints to applications in non-development environments has security implications.
-        // See https://aka.ms/dotnet/aspire/healthchecks for details before enabling these endpoints in non-development environments.
-        if (app.Environment.IsDevelopment())
-        {
-            // All health checks must pass for app to be considered ready to accept traffic after starting
-            app.MapHealthChecks(HealthEndpointPath);
+        // All health checks must pass for app to be considered ready to accept traffic after starting
+        app.MapHealthChecks(HealthEndpointPath);
 
-            // Only health checks tagged with the "live" tag must pass for app to be considered alive
-            app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
-            {
-                Predicate = r => r.Tags.Contains("live")
-            });
-        }
+        // Only health checks tagged with the "live" tag must pass for app to be considered alive
+        app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
+        {
+            Predicate = r => r.Tags.Contains("live")
+        });
 
         return app;
     }

@@ -1,12 +1,8 @@
-﻿
-using System.Diagnostics;
+﻿using System.Diagnostics;
 
-namespace KubernetesLessons.ServiceDefaults
+namespace Idendity.Infrastructure.Services;
+
+public static class ActivitySourceProvider
 {
-    public static class ActivitySourceProvider
-    {
-        public static ActivitySource Source = null!;
-
-       
-    }
+    public static ActivitySource Source { get; set; } = null!;
 }
