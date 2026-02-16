@@ -14,9 +14,11 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     // ═══════════════════════════════════════════════════════════
-    // SERILOG CONFIGURATION
+    // SERILOG + OPENTELEMETRY LOG EXPORT
     // ═══════════════════════════════════════════════════════════
     
+    var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
     Log.Logger = new LoggerConfiguration()
         .ReadFrom.Configuration(builder.Configuration)
         .Enrich.FromLogContext()
@@ -29,6 +31,17 @@ try
             retainedFileCountLimit: 30,
             outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}",
             shared: true)
+        .WriteTo.OpenTelemetry(options =>
+        {
+            options.Endpoint = otlpEndpoint;
+            options.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+            options.ResourceAttributes = new Dictionary<string, object>
+            {
+                ["service.name"] = "Catalog.Api",
+                ["host.name"] = Environment.MachineName,
+                ["container.id"] = Environment.MachineName
+            };
+        })
         .CreateLogger();
 
     // Use Serilog instead of default logger
@@ -42,7 +55,6 @@ try
 
 var serviceName = "Catalog.Api";
 var serviceVersion = "1.0.0";
-var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource

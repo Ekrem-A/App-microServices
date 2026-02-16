@@ -1,6 +1,7 @@
 using Cart.Api.Middleware;
 using Cart.Application;
 using Cart.Infrastructure;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -18,13 +19,33 @@ Console.WriteLine("===========================================");
 // ================================
 var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
+// OpenTelemetry Log Export
+builder.Logging.AddOpenTelemetry(options =>
+{
+    options.IncludeFormattedMessage = true;
+    options.IncludeScopes = true;
+    options.SetResourceBuilder(ResourceBuilder.CreateDefault()
+        .AddService("Cart.Api")
+        .AddAttributes(new Dictionary<string, object>
+        {
+            ["environment"] = builder.Environment.EnvironmentName,
+            ["host.name"] = Environment.MachineName,
+            ["container.id"] = Environment.MachineName
+        }));
+    options.AddOtlpExporter(otlpOptions =>
+    {
+        otlpOptions.Endpoint = new Uri(otelEndpoint);
+    });
+});
+
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(serviceName: "Cart.Api")
         .AddAttributes(new Dictionary<string, object>
         {
             ["environment"] = builder.Environment.EnvironmentName,
-            ["host.name"] = Environment.MachineName
+            ["host.name"] = Environment.MachineName,
+            ["container.id"] = Environment.MachineName
         }))
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation(options =>

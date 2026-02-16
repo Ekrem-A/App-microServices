@@ -30,12 +30,10 @@
 services:
 
   # ==========================================
-  # OBSERVABILITY STACK (isteğe bağlı: --profile observability)
+  # OBSERVABILITY STACK
   # ==========================================
 
   elasticsearch:
-    profiles:
-      - observability
     image: docker.elastic.co/elasticsearch/elasticsearch:7.17.18
     container_name: elasticsearch
     environment:
@@ -57,8 +55,6 @@ services:
     restart: unless-stopped
 
   kibana:
-    profiles:
-      - observability
     image: docker.elastic.co/kibana/kibana:7.17.18
     container_name: kibana
     environment:
@@ -73,8 +69,6 @@ services:
     restart: unless-stopped
 
   apm-server:
-    profiles:
-      - observability
     image: docker.elastic.co/apm/apm-server:7.17.18
     container_name: apm-server
     command: >
@@ -101,8 +95,6 @@ services:
     restart: unless-stopped
 
   otel-collector:
-    profiles:
-      - observability
     image: otel/opentelemetry-collector-contrib:0.96.0
     container_name: otel-collector
     command: ["--config=/etc/otel-config.yaml"]
@@ -112,6 +104,7 @@ services:
       - "4317:4317"
       - "4318:4318"
       - "8889:8889"  # Prometheus exporter
+      - "13133:13133"  # Health check
     depends_on:
       apm-server:
         condition: service_healthy
@@ -120,8 +113,6 @@ services:
     restart: unless-stopped
 
   prometheus:
-    profiles:
-      - observability
     image: prom/prometheus:v2.49.1
     container_name: prometheus
     command:
@@ -142,8 +133,6 @@ services:
     restart: unless-stopped
 
   grafana:
-    profiles:
-      - observability
     image: grafana/grafana:10.3.1
     container_name: grafana
     environment:
@@ -284,6 +273,97 @@ services:
     restart: unless-stopped
 
   # ==========================================
+  # MESSAGE BROKER (KAFKA)
+  # ==========================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8082:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: platform
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - platform
+    restart: unless-stopped
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      echo 'Creating Kafka topics...'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic order-created --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic order-cancelled --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic payment-succeeded --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic payment-failed --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic refund-completed --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic refund-failed --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic cart.checkout.v1 --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic catalog.product.created --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic catalog.product.updated --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic catalog.product.stock-updated --partitions 3 --replication-factor 1
+      echo 'Topics created successfully!'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
+    networks:
+      - platform
+
+  # ==========================================
   # API GATEWAY
   # ==========================================
 
@@ -298,11 +378,16 @@ services:
       - ASPNETCORE_ENVIRONMENT=Docker
       - ASPNETCORE_URLS=http://+:8080
       - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_SERVICE_NAME=Gateway.Api
       - ReverseProxy__Clusters__catalog__Destinations__default__Address=http://catalog-api:8080
       - ReverseProxy__Clusters__identity__Destinations__default__Address=http://identity-api:8080
       - ReverseProxy__Clusters__order__Destinations__default__Address=http://order-api:8080
       - ReverseProxy__Clusters__payment__Destinations__default__Address=http://payment-api:8080
       - ReverseProxy__Clusters__cart__Destinations__default__Address=http://cart-api:8080
+    depends_on:
+      otel-collector:
+        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -328,11 +413,16 @@ services:
       - OpenTelemetry__Endpoint=http://otel-collector:4317
       - ApiKeySettings__Enabled=false
       - RateLimitSettings__Enabled=false
+      - Kafka__BootstrapServers=kafka:29092
     depends_on:
       catalog-sqlserver:
         condition: service_healthy
       catalog-redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -353,6 +443,8 @@ services:
     depends_on:
       identity-sqlserver:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -373,9 +465,15 @@ services:
       - Authentication__SecretKey=SuperSecretKeyForDevelopment12345678
       - Authentication__Audience=order-api
       - EnableSwagger=true
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__GroupId=order-service
     depends_on:
       order-sqlserver:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -392,9 +490,15 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       - ConnectionStrings__DefaultConnection=Server=payment-sqlserver,1433;Database=PaymentDb;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True
       - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - Kafka__BootstrapServers=kafka:29092
+      - Kafka__GroupId=payment-service
     depends_on:
       payment-sqlserver:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -411,9 +515,14 @@ services:
       - ASPNETCORE_URLS=http://+:8080
       - Redis__ConnectionString=cart-redis:6379
       - OpenTelemetry__Endpoint=http://otel-collector:4317
+      - Kafka__BootstrapServers=kafka:29092
     depends_on:
       cart-redis:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     networks:
       - platform
     restart: unless-stopped
@@ -436,3 +545,5 @@ volumes:
   payment_sqlserver_data:
   catalog_redis_data:
   cart_redis_data:
+  kafka_data:
+  zookeeper_data:

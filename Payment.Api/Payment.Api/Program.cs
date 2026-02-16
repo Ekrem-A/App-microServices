@@ -17,13 +17,26 @@ using Microsoft.Data.SqlClient;
 var builder = WebApplication.CreateBuilder(args);
 
 // ================================
-// Serilog Configuration
+// Serilog Configuration + OpenTelemetry Log Export
 // ================================
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Application", "Payment.Api")
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.OpenTelemetry(options =>
+    {
+        options.Endpoint = otelEndpoint;
+        options.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+        options.ResourceAttributes = new Dictionary<string, object>
+        {
+            ["service.name"] = "Payment.Api",
+            ["host.name"] = Environment.MachineName,
+            ["container.id"] = Environment.MachineName
+        };
+    })
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -108,7 +121,7 @@ else
 // OpenTelemetry Configuration
 // ================================
 var serviceName = builder.Configuration["OpenTelemetry:ServiceName"] ?? "Payment.Api";
-var otlpEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+var otlpEndpoint = otelEndpoint;
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource

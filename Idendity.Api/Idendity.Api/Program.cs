@@ -21,8 +21,9 @@ if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("Default
         "Database connection is not configured. Set ConnectionStrings:DefaultConnection.");
 }
 
-// Configure Serilog with Elasticsearch
+// Configure Serilog with Elasticsearch + OpenTelemetry
 var elasticsearchUri = builder.Configuration["ElasticSearch:Uri"] ?? "http://localhost:9200";
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -50,6 +51,17 @@ Log.Logger = new LoggerConfiguration()
             return conn;
         }
     })
+    .WriteTo.OpenTelemetry(options =>
+    {
+        options.Endpoint = otelEndpoint;
+        options.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+        options.ResourceAttributes = new Dictionary<string, object>
+        {
+            ["service.name"] = "Identity.Api",
+            ["host.name"] = Environment.MachineName,
+            ["container.id"] = Environment.MachineName
+        };
+    })
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -60,7 +72,6 @@ builder.AddDefaultHealthChecks();
 // ================================
 // OpenTelemetry
 // ================================
-var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource

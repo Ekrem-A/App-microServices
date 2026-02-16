@@ -7,6 +7,7 @@ using Microsoft.OpenApi.Models;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Order.Api.Extensions;
 using Order.Api.Hubs;
 using Order.Api.Middleware;
 using Order.Api.Services;
@@ -19,6 +20,11 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ================================
+// OpenTelemetry Endpoint (used by Serilog + OTEL SDK)
+// ================================
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
 // Configure Serilog - replace default logging
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -26,6 +32,17 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.WithProperty("Application", "Order.Api")
     .Enrich.WithProperty("Environment", builder.Environment.EnvironmentName)
     .WriteTo.Console()
+    .WriteTo.OpenTelemetry(options =>
+    {
+        options.Endpoint = otelEndpoint;
+        options.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+        options.ResourceAttributes = new Dictionary<string, object>
+        {
+            ["service.name"] = "Order.Api",
+            ["host.name"] = Environment.MachineName,
+            ["container.id"] = Environment.MachineName
+        };
+    })
     .CreateLogger();
 
 builder.Host.UseSerilog(Log.Logger, dispose: true);
@@ -34,7 +51,6 @@ builder.Logging.ClearProviders(); // Remove default console logger to prevent du
 // ================================
 // OpenTelemetry
 // ================================
-var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource

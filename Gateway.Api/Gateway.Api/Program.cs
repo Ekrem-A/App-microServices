@@ -1,4 +1,4 @@
-using OpenTelemetry.Metrics;
+ using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
@@ -6,8 +6,10 @@ using Serilog;
 var builder = WebApplication.CreateBuilder(args);
 
 // ================================
-// Serilog
+// Serilog + OpenTelemetry Log Export
 // ================================
+var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
+
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
@@ -15,6 +17,17 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.WithProperty("Environment", builder.Environment.EnvironmentName)
     .WriteTo.Console(outputTemplate:
         "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
+    .WriteTo.OpenTelemetry(options =>
+    {
+        options.Endpoint = otelEndpoint;
+        options.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+        options.ResourceAttributes = new Dictionary<string, object>
+        {
+            ["service.name"] = "Gateway.Api",
+            ["host.name"] = Environment.MachineName,
+            ["container.id"] = Environment.MachineName
+        };
+    })
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -22,7 +35,6 @@ builder.Host.UseSerilog();
 // ================================
 // OpenTelemetry
 // ================================
-var otelEndpoint = builder.Configuration["OpenTelemetry:Endpoint"] ?? "http://localhost:4317";
 
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource

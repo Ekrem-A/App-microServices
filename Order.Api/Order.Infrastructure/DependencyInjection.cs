@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Order.Application.Common.Interfaces;
 using Order.Infrastructure.BackgroundJobs;
 using Order.Infrastructure.ExternalServices;
@@ -49,8 +50,26 @@ public static class DependencyInjection
         // Services
         services.AddSingleton<IDateTimeService, DateTimeService>();
 
-        // Messaging - Log-based publisher (can be replaced with RabbitMQ/Kafka later)
-        services.AddSingleton<IEventPublisher, LogEventPublisher>();
+        // Kafka Settings
+        services.Configure<KafkaSettings>(configuration.GetSection(KafkaSettings.SectionName));
+        var kafkaSettings = configuration.GetSection(KafkaSettings.SectionName).Get<KafkaSettings>();
+
+        if (kafkaSettings?.IsEnabled == true)
+        {
+            // Kafka-based event publisher (Production)
+            services.AddSingleton<IEventPublisher, KafkaEventPublisher>();
+
+            // Kafka consumer: listens to payment-succeeded / payment-failed
+            services.AddHostedService<PaymentEventConsumer>();
+
+            var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger("Order.Infrastructure");
+            logger.LogInformation("Kafka enabled: {BootstrapServers}", kafkaSettings.BootstrapServers);
+        }
+        else
+        {
+            // Log-based publisher (Development without Kafka)
+            services.AddSingleton<IEventPublisher, LogEventPublisher>();
+        }
 
         // Background Jobs
         services.AddHostedService<OutboxProcessorJob>();

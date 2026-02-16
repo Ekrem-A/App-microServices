@@ -25,49 +25,61 @@ processors:
     limit_mib: 256
     spike_limit_mib: 64
 
+  # Resource attributes for environment tagging
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "production"
+        action: upsert
+
 exporters:
-  otlp/apm:
-    endpoint: "http://apm-server:8200"
+  # APM Server — traces and metrics via gRPC
+  # APM Server 7.17 supports OTLP gRPC for traces and metrics (NOT logs)
+  otlp/elastic:
+    endpoint: "apm-server:8200"
     tls:
       insecure: true
 
-  elasticsearch:
+  # Elasticsearch — logs go directly here
+  elasticsearch/logs:
     endpoints: ["http://elasticsearch:9200"]
     logs_index: "logs-otel"
-    traces_index: "traces-otel"
-    discover:
-      on_start: true
+    mapping:
+      mode: ecs
+    flush:
+      bytes: 5000000
+      interval: 5s
     retry:
       enabled: true
       max_requests: 5
       initial_interval: 1s
       max_interval: 30s
 
-  prometheus:
-    endpoint: "0.0.0.0:8889"
-    namespace: "otel"
-    resource_to_telemetry_conversion:
-      enabled: true
-
   debug:
-    verbosity: basic
+    verbosity: detailed
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
 
 service:
+  extensions: [health_check]
+
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlp/apm, debug]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/elastic, debug]
 
     metrics:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [prometheus, otlp/apm, debug]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/elastic, debug]
 
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlp/apm, debug]
+      processors: [memory_limiter, resource, batch]
+      exporters: [elasticsearch/logs, debug]
 
   telemetry:
     logs:
