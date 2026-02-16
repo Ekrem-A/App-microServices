@@ -61,9 +61,6 @@ public static class DependencyInjection
 
             // Kafka consumer: listens to payment-succeeded / payment-failed
             services.AddHostedService<PaymentEventConsumer>();
-
-            var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger("Order.Infrastructure");
-            logger.LogInformation("Kafka enabled: {BootstrapServers}", kafkaSettings.BootstrapServers);
         }
         else
         {
